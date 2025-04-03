@@ -1,0 +1,171 @@
+/* Root Variables */
+:root {
+    /* Colors - Base */
+    --primary-color: #8B0000; /* Rosso amaranto scuro */
+    --primary-dark: #5C0000; /* Rosso amaranto molto scuro */
+    --primary-light: #D9A6A6; /* Rosso amaranto tenue */
+    --primary-color-rgb: 139, 0, 0;
+
+
+
+        /* Status Colors */
+    --success-color: #4caf50; /* Verde scuro */
+    --danger-color: #8B0000; /* Rosso amaranto scuro */
+    --warning-color: #D2691E; /* Arancione bruciato */
+    --info-color: #6D6875; /* Grigio/viola neutro */
+
+    /* Text Colors */
+    --text-primary: #2C2C2C; /* Grigio antracite */
+    --text-secondary: #4A4A4A; /* Grigio medio */
+    --text-muted: #A9A9A9; /* Grigio chiaro */
+
+    /* Background Colors */
+    --bg-primary: #FBF8F6; /* Bianco crema tenue */
+    --bg-secondary: #F3ECEB; /* Beige chiarissimo */
+    --bg-card: #EAE2E0; /* Beige molto chiaro */
+    --bg-selected: #DDD4D2; /* Beige medio */
+    --bg-hover: #CEC5C3; /* Beige tenue */
+    --bg-input: #F7F2F1; /* Bianco sporco caldo */
+
+    /* Border Colors */
+    --border-color: #C7B8B6; /* Beige scuro neutro */
+
+    /* Typography */
+    --font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+    --font-size-xs: 0.75rem;   /* 12px */
+    --font-size-sm: 0.875rem;  /* 14px */
+    --font-size-md: 1rem;      /* 16px */
+    --font-size-lg: 1.125rem;  /* 18px */
+    --font-size-xl: 1.25rem;   /* 20px */
+
+    /* Spacing */
+    --spacing-xs: 0.25rem;     /* 4px */
+    --spacing-sm: 0.5rem;      /* 8px */
+    --spacing-md: 1rem;        /* 16px */
+    --spacing-lg: 1.5rem;      /* 24px */
+    --spacing-xl: 2rem;        /* 32px */
+
+    /* Border Radius */
+    --border-radius-sm: 4px;
+    --border-radius: 8px;
+    --border-radius-lg: 12px;
+
+    /* Shadows */
+    --shadow-xs: 0 1px 2px rgba(139, 0, 0, 0.03);
+    --shadow-sm: 0 2px 4px rgba(139, 0, 0, 0.07);
+    --shadow-md: 0 4px 8px rgba(139, 0, 0, 0.1);
+    --shadow-lg: 0 8px 16px rgba(139, 0, 0, 0.12);
+
+    /* Transitions */
+    --transition-fast: 0.2s ease;
+    --transition-normal: 0.3s ease;
+    --transition-slow: 0.5s ease;
+
+    /* Z-index */
+    --z-modal: 1000;
+    --z-notification: 1100;
+    --z-tooltip: 1200;
+
+    /* Task Status Colors */
+    --status-pending-bg: rgba(169, 169, 169, 0.15);
+    --status-pending-color: var(--text-muted);
+    --status-in-progress-bg: rgba(139, 0, 0, 0.15);  
+    --status-in-progress-color: var(--primary-color);
+    --status-completed-bg: rgba(76, 175, 80, 0.15);
+    --status-completed-color: var(--success-color);
+    --status-blocked-bg: rgba(210, 105, 30, 0.15);
+    --status-blocked-color: var(--danger-color);
+
+
+
+    /* Task Node Colors */
+    --task-header-hover: var(--bg-hover);
+    --task-header-selected: var(--bg-selected);
+    --task-border: var(--border-color);
+    
+    /* Stats Card Colors */
+    --stat-pending-bg: var(--status-pending-bg);
+    --stat-pending-color: var(--status-pending-color);
+    --stat-progress-bg: var(--status-in-progress-bg);
+    --stat-progress-color: var(--status-in-progress-color);
+    --stat-completed-bg: var(--status-completed-bg);
+    --stat-completed-color: var(--status-completed-color);
+    --stat-blocked-bg: var(--status-blocked-bg);
+    --stat-blocked-color: var(--status-blocked-color);
+    /* Order Status Colors */
+    --order-status-nuovo-bg: rgba(169, 169, 169, 0.15);
+    --order-status-nuovo-color: var(--text-muted);
+    --order-status-assegnato-bg: rgba(210, 105, 30, 0.15);
+    --order-status-assegnato-color: var(--warning-color);
+    --order-status-in-lavorazione-bg: rgba(139, 0, 0, 0.15);
+    --order-status-in-lavorazione-color: var(--primary-color);
+    --order-status-standby-bg: rgba(109, 104, 117, 0.15);
+    --order-status-standby-color: var(--info-color);
+    --order-status-completato-bg: rgba(76, 175, 80, 0.15);
+    --order-status-completato-color: var(--success-color);
+
+}
+
+/* Base Reset */
+*, *::before, *::after {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+}
+
+body {
+    font-family: var(--font-family);
+    line-height: 1.5;
+    color: var(--text-primary);
+    background-color: var(--bg-primary);
+}
+
+/* Form Elements */
+input, select, button {
+    font-family: inherit;
+    font-size: inherit;
+}
+
+button {
+    cursor: pointer;
+    border: none;
+    background: none;
+    padding: var(--spacing-sm) var(--spacing-md);
+    border-radius: var(--border-radius);
+    font-weight: 500;
+    transition: var(--transition-normal);
+}
+
+.btn {
+    background: var(--primary-color);
+    color: var(--bg-primary);
+}
+
+.btn:hover:not(:disabled) {
+    background: var(--primary-dark);
+    transform: translateY(-1px);
+    box-shadow: var(--shadow-sm);
+}
+
+.btn:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+}
+
+.btn-secondary {
+    background: var(--bg-secondary);
+    color: var(--text-primary);
+    border: 1px solid var(--border-color);
+}
+
+.btn-secondary:hover:not(:disabled) {
+    background: var(--bg-hover);
+    border-color: var(--primary-dark);
+}
+
+
+/* Aggiungi in tsis.css */
+.sliding-panel.large {
+    width: 80%; /* Raddoppia la larghezza default */
+    max-width: 1200px; /* Imposta un limite massimo */
+}

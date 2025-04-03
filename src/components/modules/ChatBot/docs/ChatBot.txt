@@ -1,0 +1,2052 @@
+
+# ====== File: /var/www/html/insightg/wup/r_wup/src/components/modules/ChatBot/stores/chatBotStore.js ======
+// src/components/modules/ChatBot/stores/chatBotStore.js
+import { create } from 'zustand';
+
+const useChatBotStore = create((set, get) => ({
+  // Stato dei profili
+  profiles: [],
+  currentProfileId: null,
+  
+  // Stato della chat
+  chatHistory: [],
+  isTyping: false,
+  
+  // Stato per il knowledge base
+  knowledgeBases: [],
+  
+  // Impostazioni
+  settings: {
+    debugMode: false,
+    claudeApiKey: '',
+    ultramsgToken: ''
+  },
+  
+  // Statistiche
+  stats: {
+    totalMessages: 0,
+    activeUsers: 0
+  },
+  
+  // Azioni per i profili
+  setProfiles: (profiles) => set({ profiles }),
+  setCurrentProfileId: (id) => set({ currentProfileId: id }),
+  
+  // Metodo per ottenere il profilo corrente
+  getCurrentProfile: () => {
+    const { profiles, currentProfileId } = get();
+    return profiles.find(profile => profile.id === currentProfileId) || null;
+  },
+  
+  // Azioni per la chat
+  addMessage: (message, type) => {
+    const newMessage = {
+      type,
+      message,
+      timestamp: new Date().toISOString()
+    };
+    
+    set(state => ({
+      chatHistory: [...state.chatHistory, newMessage],
+      stats: {
+        ...state.stats,
+        totalMessages: state.stats.totalMessages + 1
+      }
+    }));
+    
+    return newMessage;
+  },
+  
+  clearChatHistory: () => set({ chatHistory: [] }),
+  
+  setTyping: (isTyping) => set({ isTyping }),
+  
+  // Azioni per knowledge base
+  setKnowledgeBases: (knowledgeBases) => set({ knowledgeBases }),
+  
+  addKnowledgeBase: (knowledgeBase) => set(state => ({ 
+    knowledgeBases: [...state.knowledgeBases, knowledgeBase] 
+  })),
+  
+  updateKnowledgeBase: (id, updatedKnowledgeBase) => set(state => ({
+    knowledgeBases: state.knowledgeBases.map(kb => 
+      kb.id === id ? { ...kb, ...updatedKnowledgeBase } : kb
+    )
+  })),
+  
+  removeKnowledgeBase: (id) => set(state => ({
+    knowledgeBases: state.knowledgeBases.filter(kb => kb.id !== id)
+  })),
+  
+  // Azioni per impostazioni
+  updateSettings: (newSettings) => set(state => ({
+    settings: { ...state.settings, ...newSettings }
+  })),
+  
+  // Azioni per i profili
+  addProfile: (profile) => set(state => ({ 
+    profiles: [...state.profiles, profile] 
+  })),
+  
+  updateProfile: (id, updatedProfile) => set(state => ({
+    profiles: state.profiles.map(profile => 
+      profile.id === id ? { ...profile, ...updatedProfile } : profile
+    )
+  })),
+  
+  deleteProfile: (id) => set(state => ({
+    profiles: state.profiles.filter(profile => profile.id !== id),
+    currentProfileId: state.currentProfileId === id ? null : state.currentProfileId
+  })),
+  
+  // Azione per aggiornare le statistiche
+  updateStats: (newStats) => set(state => ({
+    stats: { ...state.stats, ...newStats }
+  })),
+}));
+
+export default useChatBotStore;
+
+
+
+# ====== File: /var/www/html/insightg/wup/r_wup/src/components/modules/ChatBot/index.jsx ======
+// src/components/modules/ChatBot/index.jsx
+import React from 'react';
+import { Box } from '@mui/material';
+import { SnackbarProvider } from 'notistack';
+import ChatBotContainer from './ChatBotContainer';
+
+/**
+ * Componente di punto di ingresso per il modulo ChatBot.
+ * Configura SnackbarProvider per le notifiche e renderizza il container principale.
+ */
+const ChatBotModule = () => {
+  return (
+    <Box 
+      sx={{ 
+        height: '100%', 
+        width: '100%', 
+        display: 'flex',
+        flexDirection: 'column',
+        overflow: 'hidden' 
+      }}
+    >
+      <SnackbarProvider 
+        maxSnack={3}
+        autoHideDuration={3000}
+        anchorOrigin={{ 
+          vertical: 'bottom', 
+          horizontal: 'right' 
+        }}
+      >
+        <ChatBotContainer />
+      </SnackbarProvider>
+    </Box>
+  );
+};
+
+export default ChatBotModule;
+
+
+
+# ====== File: /var/www/html/insightg/wup/r_wup/src/components/modules/ChatBot/hooks/useChatSession.js ======
+// src/components/modules/ChatBot/hooks/useChatSession.js
+import { useState, useEffect, useCallback } from 'react';
+import useChatBotStore from '../stores/chatBotStore';
+import chatBotApi from '../api/chatBotApi';
+
+/**
+ * Custom hook per gestire una sessione di chat
+ * @returns {Object} Funzioni e stati per gestire la chat
+ */
+const useChatSession = () => {
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState(null);
+  
+  // Accesso allo store
+  const { 
+    chatHistory, 
+    addMessage, 
+    isTyping, 
+    setTyping, 
+    currentProfileId, 
+    getCurrentProfile, 
+    clearChatHistory 
+  } = useChatBotStore();
+  
+  // Ottieni il profilo corrente
+  const currentProfile = getCurrentProfile();
+  
+  // Invia un messaggio e ottieni la risposta dal bot
+  const sendMessage = useCallback(async (message) => {
+    if (!message.trim() || isTyping) return null;
+    
+    // Aggiungi il messaggio dell'utente alla chat
+    const userMessage = addMessage(message, 'user');
+    
+    // Mostra l'indicatore di digitazione
+    setTyping(true);
+    setIsLoading(true);
+    setError(null);
+    
+    try {
+      // Prepara i dati per la richiesta API
+      const requestData = {
+        message,
+        history: chatHistory.slice(-3),  // Ultimi 3 messaggi per contesto
+        profileId: currentProfileId || 'default'
+      };
+      
+      // Chiamata API
+      const response = await chatBotApi.getBotResponse(requestData);
+      
+      if (response.error) {
+        throw new Error(response.message || 'Errore nella risposta del bot');
+      }
+      
+      // Aggiungi la risposta del bot alla chat
+      const botMessage = addMessage(response.message, 'bot');
+      
+      return { userMessage, botMessage };
+    } catch (error) {
+      console.error('Error getting bot response:', error);
+      setError(error.message || 'Si è verificato un errore nella comunicazione con il bot');
+      
+      // Aggiungi un messaggio di errore alla chat
+      addMessage('Mi dispiace, si è verificato un errore nella comunicazione.', 'bot');
+      
+      return null;
+    } finally {
+      // Nascondi l'indicatore di digitazione
+      setTyping(false);
+      setIsLoading(false);
+    }
+  }, [addMessage, chatHistory, currentProfileId, isTyping, setTyping]);
+  
+  // Inizia una nuova chat
+  const startNewChat = useCallback(() => {
+    clearChatHistory();
+    
+    // Invia un messaggio di benvenuto se c'è un profilo corrente
+    if (currentProfile) {
+      addMessage(currentProfile.welcome || `Ciao! Sono ${currentProfile.name}. Come posso aiutarti?`, 'bot');
+    } else {
+      addMessage('Ciao! Come posso aiutarti?', 'bot');
+    }
+  }, [addMessage, clearChatHistory, currentProfile]);
+  
+  // Inizializza la chat quando cambia il profilo corrente
+  useEffect(() => {
+    if (currentProfile && chatHistory.length === 0) {
+      startNewChat();
+    }
+  }, [currentProfile, chatHistory.length, startNewChat]);
+  
+  return {
+    chatHistory,
+    isTyping,
+    isLoading,
+    error,
+    currentProfile,
+    sendMessage,
+    startNewChat,
+    clearError: () => setError(null)
+  };
+};
+
+export default useChatSession;
+
+
+
+# ====== File: /var/www/html/insightg/wup/r_wup/src/components/modules/ChatBot/api/chatBotApi.js ======
+// src/components/modules/ChatBot/api/chatBotApi.js
+import axios from 'axios';
+
+// Base URL per l'API
+const API_BASE_URL = '../../backend/b_ciao.php';
+
+const chatBotApi = {
+  /**
+   * Ottiene tutti i profili disponibili
+   * @returns {Promise} Promise con la risposta
+   */
+  getProfiles: async () => {
+    try {
+      const response = await axios.get(`${API_BASE_URL}?action=getProfiles`);
+      return response.data;
+    } catch (error) {
+      console.error('Error fetching profiles:', error);
+      throw error;
+    }
+  },
+  
+  /**
+   * Salva un profilo (crea nuovo o aggiorna esistente)
+   * @param {Object} profileData Dati del profilo
+   * @returns {Promise} Promise con la risposta
+   */
+  saveProfile: async (profileData) => {
+    try {
+      const response = await axios.post(`${API_BASE_URL}?action=saveProfile`, profileData, {
+        headers: {
+          'Content-Type': 'application/json'
+        }
+      });
+      return response.data;
+    } catch (error) {
+      console.error('Error saving profile:', error);
+      throw error;
+    }
+  },
+  
+  /**
+   * Elimina un profilo
+   * @param {string} profileId ID del profilo
+   * @returns {Promise} Promise con la risposta
+   */
+  deleteProfile: async (profileId) => {
+    try {
+      const response = await axios.delete(`${API_BASE_URL}?action=deleteProfile&id=${profileId}`);
+      return response.data;
+    } catch (error) {
+      console.error('Error deleting profile:', error);
+      throw error;
+    }
+  },
+  
+  /**
+   * Imposta il profilo di default per la versione mobile
+   * @returns {Promise} Promise con la risposta
+   */
+  clearMobileDefault: async () => {
+    try {
+      const response = await axios.post(`${API_BASE_URL}?action=clearMobileDefault`);
+      return response.data;
+    } catch (error) {
+      console.error('Error clearing mobile default:', error);
+      throw error;
+    }
+  },
+  
+  /**
+   * Ottiene una risposta dal bot
+   * @param {Object} requestData Dati della richiesta
+   * @returns {Promise} Promise con la risposta
+   */
+  getBotResponse: async (requestData) => {
+    try {
+      const response = await axios.post(`${API_BASE_URL}?action=getBotResponse`, requestData, {
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json'
+        }
+      });
+      return response.data;
+    } catch (error) {
+      console.error('Error getting bot response:', error);
+      throw error;
+    }
+  },
+  
+  /**
+   * Ottiene le impostazioni
+   * @returns {Promise} Promise con la risposta
+   */
+  getSettings: async () => {
+    try {
+      const response = await axios.get(`${API_BASE_URL}?action=getSettings`);
+      return response.data;
+    } catch (error) {
+      console.error('Error fetching settings:', error);
+      throw error;
+    }
+  },
+  
+  /**
+   * Salva le impostazioni
+   * @param {Object} settingsData Dati delle impostazioni
+   * @returns {Promise} Promise con la risposta
+   */
+  saveSettings: async (settingsData) => {
+    try {
+      const response = await axios.post(`${API_BASE_URL}?action=saveSettings`, settingsData, {
+        headers: {
+          'Content-Type': 'application/json'
+        }
+      });
+      return response.data;
+    } catch (error) {
+      console.error('Error saving settings:', error);
+      throw error;
+    }
+  }
+};
+
+export default chatBotApi;
+
+
+
+# ====== File: /var/www/html/insightg/wup/r_wup/src/components/modules/ChatBot/components/common/Message.jsx ======
+// src/components/modules/ChatBot/components/common/Message.jsx
+import React from 'react';
+import { Box, Paper, Typography, useTheme } from '@mui/material';
+import { format } from 'date-fns';
+import { it } from 'date-fns/locale';
+
+/**
+ * Componente per visualizzare un messaggio nella chat
+ * 
+ * @param {Object} props
+ * @param {string} props.message - Testo del messaggio
+ * @param {string} props.type - Tipo di messaggio ('user' o 'bot')
+ * @param {string} props.timestamp - Timestamp in formato ISO
+ */
+const Message = ({ message, type, timestamp }) => {
+  const theme = useTheme();
+  
+  // Formatta l'orario
+  const formattedTime = timestamp 
+    ? format(new Date(timestamp), 'HH:mm', { locale: it })
+    : format(new Date(), 'HH:mm', { locale: it });
+  
+  // Stili in base al tipo di messaggio
+  const isUser = type === 'user';
+  const backgroundColor = isUser 
+    ? theme.palette.primary.light 
+    : theme.palette.background.paper;
+  const textColor = isUser 
+    ? theme.palette.primary.contrastText 
+    : theme.palette.text.primary;
+  
+  return (
+    <Box
+      sx={{
+        display: 'flex',
+        justifyContent: isUser ? 'flex-end' : 'flex-start',
+        mb: 2
+      }}
+    >
+      <Paper
+        elevation={1}
+        sx={{
+          p: 2,
+          maxWidth: '75%',
+          borderRadius: 2,
+          backgroundColor,
+          color: textColor,
+          position: 'relative',
+          '&::after': {
+            content: '""',
+            position: 'absolute',
+            width: 0,
+            height: 0,
+            borderStyle: 'solid',
+            borderWidth: '8px 8px 0 0',
+            borderColor: `${backgroundColor} transparent transparent transparent`,
+            transform: isUser ? 'rotate(90deg)' : 'rotate(0deg)',
+            right: isUser ? '-8px' : 'auto',
+            left: isUser ? 'auto' : '-8px',
+            top: 10
+          }
+        }}
+      >
+        <Typography variant="body1" sx={{ whiteSpace: 'pre-wrap' }}>
+          {message}
+        </Typography>
+        <Typography 
+          variant="caption" 
+          sx={{ 
+            display: 'block', 
+            textAlign: 'right', 
+            mt: 1, 
+            color: isUser ? 'rgba(255,255,255,0.7)' : 'text.secondary' 
+          }}
+        >
+          {formattedTime}
+        </Typography>
+      </Paper>
+    </Box>
+  );
+};
+
+export default Message;
+
+
+
+# ====== File: /var/www/html/insightg/wup/r_wup/src/components/modules/ChatBot/components/common/ProfileCard.jsx ======
+// src/components/modules/ChatBot/components/common/ProfileCard.jsx
+import React from 'react';
+import { 
+  Card, 
+  CardContent, 
+  CardActions, 
+  Typography, 
+  IconButton, 
+  Box, 
+  Chip,
+  useTheme 
+} from '@mui/material';
+import { 
+  Edit as EditIcon,
+  Delete as DeleteIcon,
+  PlayArrow as PlayIcon,
+  PhoneAndroid as MobileIcon
+} from '@mui/icons-material';
+
+/**
+ * Card per visualizzare un profilo bot
+ */
+const ProfileCard = ({ 
+  profile, 
+  isSelected, 
+  onSelect, 
+  onEdit, 
+  onDelete 
+}) => {
+  const theme = useTheme();
+  
+  return (
+    <Card 
+      sx={{ 
+        mb: 2, 
+        transition: 'all 0.3s ease',
+        boxShadow: isSelected ? 4 : 1,
+        border: isSelected ? `2px solid ${theme.palette.primary.main}` : 'none',
+        '&:hover': {
+          boxShadow: 3,
+          transform: 'translateY(-2px)'
+        }
+      }}
+    >
+      <CardContent>
+        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+          <Typography variant="h6" component="div" gutterBottom>
+            {profile.name}
+          </Typography>
+          
+          {profile.isMobileDefault && (
+            <Chip 
+              icon={<MobileIcon />} 
+              label="Default Mobile" 
+              size="small" 
+              color="primary" 
+              variant="outlined"
+            />
+          )}
+        </Box>
+        
+        <Typography 
+          variant="body2" 
+          color="text.secondary" 
+          sx={{ 
+            mb: 2,
+            display: '-webkit-box',
+            WebkitLineClamp: 3,
+            WebkitBoxOrient: 'vertical',
+            overflow: 'hidden',
+            textOverflow: 'ellipsis'
+          }}
+        >
+          {profile.definition}
+        </Typography>
+        
+        <Box>
+          <Chip 
+            label={`${profile.knowledgeBases?.length || 0} basi di conoscenza`} 
+            size="small" 
+            sx={{ fontSize: '0.75rem' }}
+          />
+        </Box>
+      </CardContent>
+      
+      <CardActions sx={{ display: 'flex', justifyContent: 'flex-end' }}>
+        <IconButton 
+          size="small" 
+          onClick={() => onSelect(profile.id)}
+          color={isSelected ? "primary" : "default"}
+          title="Test"
+        >
+          <PlayIcon />
+        </IconButton>
+        
+        <IconButton 
+          size="small" 
+          onClick={() => onEdit(profile.id)}
+          color="info"
+          title="Modifica"
+        >
+          <EditIcon />
+        </IconButton>
+        
+        <IconButton 
+          size="small" 
+          onClick={() => onDelete(profile.id)}
+          color="error"
+          title="Elimina"
+        >
+          <DeleteIcon />
+        </IconButton>
+      </CardActions>
+    </Card>
+  );
+};
+
+export default ProfileCard;
+
+
+
+# ====== File: /var/www/html/insightg/wup/r_wup/src/components/modules/ChatBot/components/common/TypingIndicator.jsx ======
+// src/components/modules/ChatBot/components/common/TypingIndicator.jsx
+import React from 'react';
+import { Box, Paper, useTheme } from '@mui/material';
+
+/**
+ * Componente che mostra l'indicatore di digitazione animato
+ */
+const TypingIndicator = () => {
+  const theme = useTheme();
+
+  return (
+    <Box
+      sx={{
+        display: 'flex',
+        justifyContent: 'flex-start',
+        mb: 2
+      }}
+    >
+      <Paper
+        elevation={1}
+        sx={{
+          p: 2,
+          borderRadius: 2,
+          backgroundColor: theme.palette.background.paper,
+          position: 'relative',
+          '&::after': {
+            content: '""',
+            position: 'absolute',
+            width: 0,
+            height: 0,
+            borderStyle: 'solid',
+            borderWidth: '8px 8px 0 0',
+            borderColor: `${theme.palette.background.paper} transparent transparent transparent`,
+            left: '-8px',
+            top: 10
+          }
+        }}
+      >
+        <Box sx={{ display: 'flex', gap: 1 }}>
+          {[0, 1, 2].map((i) => (
+            <Box
+              key={i}
+              sx={{
+                width: '8px',
+                height: '8px',
+                borderRadius: '50%',
+                backgroundColor: theme.palette.primary.main,
+                animation: 'typing-animation 1s infinite',
+                animationDelay: `${i * 0.3}s`
+              }}
+            />
+          ))}
+        </Box>
+      </Paper>
+      <style jsx>{`
+        @keyframes typing-animation {
+          0%, 100% { transform: translateY(0); opacity: 0.5; }
+          50% { transform: translateY(-5px); opacity: 1; }
+        }
+      `}</style>
+    </Box>
+  );
+};
+
+export default TypingIndicator;
+
+
+
+# ====== File: /var/www/html/insightg/wup/r_wup/src/components/modules/ChatBot/components/SettingsPanel.jsx ======
+// src/components/modules/ChatBot/components/SettingsPanel.jsx
+import React, { useState, useEffect } from 'react';
+import {
+  Box,
+  Paper,
+  Typography,
+  TextField,
+  Button,
+  FormControlLabel,
+  Switch,
+  Grid,
+  Divider,
+  Card,
+  CardContent,
+  CardActions,
+  Alert,
+  CircularProgress
+} from '@mui/material';
+import {
+  Save as SaveIcon,
+  Key as KeyIcon,
+  Security as SecurityIcon,
+  Code as CodeIcon
+} from '@mui/icons-material';
+import { useSnackbar } from 'notistack';
+import useChatBotStore from '../stores/chatBotStore';
+import chatBotApi from '../api/chatBotApi';
+
+/**
+ * Componente per la gestione delle impostazioni
+ */
+const SettingsPanel = () => {
+  const { enqueueSnackbar } = useSnackbar();
+  
+  // Accesso allo store
+  const { settings, updateSettings } = useChatBotStore();
+  
+  // Stati locali
+  const [formData, setFormData] = useState({
+    claudeApiKey: '',
+    ultramsgToken: '',
+    debugMode: false
+  });
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState(null);
+  
+  // Inizializza il form con i dati dallo store
+  useEffect(() => {
+    setFormData({
+      claudeApiKey: settings.claudeApiKey || '',
+      ultramsgToken: settings.ultramsgToken || '',
+      debugMode: settings.debugMode || false
+    });
+  }, [settings]);
+  
+  // Gestisce i cambiamenti nei campi del form
+  const handleChange = (e) => {
+    const { name, value, checked, type } = e.target;
+    setFormData(prev => ({
+      ...prev,
+      [name]: type === 'checkbox' ? checked : value
+    }));
+  };
+  
+  // Salva le impostazioni
+  const handleSave = async () => {
+    setIsLoading(true);
+    setError(null);
+    
+    try {
+      // Salva su localStorage per compatibilità con il codice originale
+      localStorage.setItem('botSettings', JSON.stringify(formData));
+      
+      // Aggiorna lo store
+      updateSettings(formData);
+      
+      // Mostra notifica di successo
+      enqueueSnackbar('Impostazioni salvate con successo', { variant: 'success' });
+    } catch (error) {
+      console.error('Error saving settings:', error);
+      setError('Si è verificato un errore durante il salvataggio delle impostazioni: ' + error.message);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+  
+  return (
+    <Box sx={{ p: 3, width: '100%', overflow: 'auto' }}>
+      <Typography variant="h5" component="h2" gutterBottom>
+        Impostazioni
+      </Typography>
+      
+      {error && (
+        <Alert severity="error" sx={{ mb: 3 }}>
+          {error}
+        </Alert>
+      )}
+      
+      <Grid container spacing={3}>
+        <Grid item xs={12} md={6}>
+          <Card>
+            <CardContent>
+              <Typography variant="h6" component="div" sx={{ display: 'flex', alignItems: 'center', mb: 2 }}>
+                <KeyIcon sx={{ mr: 1 }} /> Chiavi API
+              </Typography>
+              
+              <TextField
+                name="claudeApiKey"
+                label="Claude API Key"
+                value={formData.claudeApiKey}
+                onChange={handleChange}
+                fullWidth
+                type="password"
+                margin="normal"
+                InputProps={{
+                  startAdornment: (
+                    <SecurityIcon color="primary" sx={{ mr: 1 }} />
+                  )
+                }}
+              />
+              
+              <TextField
+                name="ultramsgToken"
+                label="UltraMsg Token"
+                value={formData.ultramsgToken}
+                onChange={handleChange}
+                fullWidth
+                type="password"
+                margin="normal"
+                InputProps={{
+                  startAdornment: (
+                    <SecurityIcon color="primary" sx={{ mr: 1 }} />
+                  )
+                }}
+              />
+            </CardContent>
+          </Card>
+        </Grid>
+        
+        <Grid item xs={12} md={6}>
+          <Card>
+            <CardContent>
+              <Typography variant="h6" component="div" sx={{ display: 'flex', alignItems: 'center', mb: 2 }}>
+                <CodeIcon sx={{ mr: 1 }} /> Opzioni di Sviluppo
+              </Typography>
+              
+              <FormControlLabel
+                control={
+                  <Switch
+                    name="debugMode"
+                    checked={formData.debugMode}
+                    onChange={handleChange}
+                  />
+                }
+                label="Modalità Debug"
+              />
+              <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
+                Quando attivata, la modalità debug mostrerà informazioni aggiuntive nei messaggi del bot e nei log della console.
+              </Typography>
+            </CardContent>
+          </Card>
+        </Grid>
+        
+        <Grid item xs={12}>
+          <Box sx={{ display: 'flex', justifyContent: 'flex-end', mt: 2 }}>
+            <Button
+              variant="contained"
+              color="primary"
+              startIcon={isLoading ? <CircularProgress size={20} /> : <SaveIcon />}
+              onClick={handleSave}
+              disabled={isLoading}
+            >
+              {isLoading ? 'Salvataggio...' : 'Salva Impostazioni'}
+            </Button>
+          </Box>
+        </Grid>
+      </Grid>
+      
+      <Divider sx={{ my: 4 }} />
+      
+      <Typography variant="h6" gutterBottom>
+        Informazioni sul Sistema
+      </Typography>
+      
+      <Grid container spacing={2} sx={{ mt: 1 }}>
+        <Grid item xs={12} md={4}>
+          <Paper sx={{ p: 2 }}>
+            <Typography variant="subtitle2" color="text.secondary">
+              Versione
+            </Typography>
+            <Typography variant="body1">
+              ChatBot Manager 1.0.0
+            </Typography>
+          </Paper>
+        </Grid>
+        
+        <Grid item xs={12} md={4}>
+          <Paper sx={{ p: 2 }}>
+            <Typography variant="subtitle2" color="text.secondary">
+              Framework
+            </Typography>
+            <Typography variant="body1">
+              React 18.2.0
+            </Typography>
+          </Paper>
+        </Grid>
+        
+        <Grid item xs={12} md={4}>
+          <Paper sx={{ p: 2 }}>
+            <Typography variant="subtitle2" color="text.secondary">
+              Modello LLM
+            </Typography>
+            <Typography variant="body1">
+              Claude 3 Opus
+            </Typography>
+          </Paper>
+        </Grid>
+      </Grid>
+    </Box>
+  );
+};
+
+export default SettingsPanel;
+
+
+
+# ====== File: /var/www/html/insightg/wup/r_wup/src/components/modules/ChatBot/components/KnowledgeBaseEditor.jsx ======
+// src/components/modules/ChatBot/components/KnowledgeBaseEditor.jsx
+import React, { useState } from 'react';
+import {
+  Box,
+  Paper,
+  Typography,
+  TextField,
+  Button,
+  IconButton,
+  Tabs,
+  Tab,
+  Switch,
+  FormControlLabel,
+  InputAdornment,
+  Divider,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogActions
+} from '@mui/material';
+import {
+  Add as AddIcon,
+  Delete as DeleteIcon,
+  Save as SaveIcon,
+  Upload as UploadIcon,
+  Download as DownloadIcon,
+  Close as CloseIcon
+} from '@mui/icons-material';
+import { v4 as uuidv4 } from 'uuid';
+import { useSnackbar } from 'notistack';
+
+/**
+ * Editor per le basi di conoscenza
+ */
+const KnowledgeBaseEditor = ({ knowledgeBases = [], onChange, disabled = false }) => {
+  const { enqueueSnackbar } = useSnackbar();
+  
+  // Stati locali
+  const [activeTabIndex, setActiveTabIndex] = useState(0);
+  const [localKnowledgeBases, setLocalKnowledgeBases] = useState(knowledgeBases);
+  const [fileUploadDialog, setFileUploadDialog] = useState(false);
+  
+  // Riferimento al file input (nascosto)
+  const fileInputRef = React.useRef(null);
+  
+  // Sincronizza lo stato locale quando cambiano le props
+  React.useEffect(() => {
+    setLocalKnowledgeBases(knowledgeBases);
+  }, [knowledgeBases]);
+  
+  // Gestisce il cambio tab
+  const handleTabChange = (event, newValue) => {
+    setActiveTabIndex(newValue);
+  };
+  
+  // Aggiunge una nuova base di conoscenza
+  const handleAddKnowledgeBase = () => {
+    const newKnowledgeBase = {
+      id: uuidv4(),
+      name: '',
+      content: '',
+      active: true
+    };
+    
+    setLocalKnowledgeBases(prev => [...prev, newKnowledgeBase]);
+    setActiveTabIndex(localKnowledgeBases.length);
+    
+    // Propaghiamo il cambiamento
+    if (onChange) {
+      onChange([...localKnowledgeBases, newKnowledgeBase]);
+    }
+  };
+  
+  // Rimuove una base di conoscenza
+  const handleRemoveKnowledgeBase = (index) => {
+    if (localKnowledgeBases.length <= 1) {
+      enqueueSnackbar('Deve essere presente almeno una base di conoscenza', { variant: 'warning' });
+      return;
+    }
+    
+    const newKnowledgeBases = [...localKnowledgeBases];
+    newKnowledgeBases.splice(index, 1);
+    
+    setLocalKnowledgeBases(newKnowledgeBases);
+    
+    // Aggiorna l'indice della tab attiva
+    if (activeTabIndex >= newKnowledgeBases.length) {
+      setActiveTabIndex(Math.max(0, newKnowledgeBases.length - 1));
+    }
+    
+    // Propaghiamo il cambiamento
+    if (onChange) {
+      onChange(newKnowledgeBases);
+    }
+  };
+  
+  // Gestisce i cambiamenti nei campi
+  const handleKnowledgeBaseChange = (index, field, value) => {
+    const newKnowledgeBases = [...localKnowledgeBases];
+    newKnowledgeBases[index] = {
+      ...newKnowledgeBases[index],
+      [field]: value
+    };
+    
+    setLocalKnowledgeBases(newKnowledgeBases);
+    
+    // Propaghiamo il cambiamento
+    if (onChange) {
+      onChange(newKnowledgeBases);
+    }
+  };
+  
+  // Gestisce l'importazione di un file
+  const handleFileImport = (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const content = event.target.result;
+      
+      // Aggiorna il contenuto della base di conoscenza attiva
+      const newKnowledgeBases = [...localKnowledgeBases];
+      newKnowledgeBases[activeTabIndex].content = content;
+      
+      // Aggiorna il nome se la base è vuota
+      if (!newKnowledgeBases[activeTabIndex].name) {
+        const fileName = file.name.replace(/\.[^/.]+$/, ""); // Rimuovi estensione
+        newKnowledgeBases[activeTabIndex].name = fileName;
+      }
+      
+      setLocalKnowledgeBases(newKnowledgeBases);
+      
+      // Propaghiamo il cambiamento
+      if (onChange) {
+        onChange(newKnowledgeBases);
+      }
+      
+      // Reset del campo file
+      e.target.value = '';
+      setFileUploadDialog(false);
+      
+      enqueueSnackbar(`File importato: ${file.name}`, { variant: 'success' });
+    };
+    
+    reader.readAsText(file);
+  };
+  
+  // Gestisce l'esportazione in file
+  const handleFileExport = () => {
+    const kb = localKnowledgeBases[activeTabIndex];
+    if (!kb || !kb.content) {
+      enqueueSnackbar('Nessun contenuto da esportare', { variant: 'warning' });
+      return;
+    }
+    
+    const fileName = kb.name || 'base_conoscenza';
+    const blob = new Blob([kb.content], { type: 'text/plain' });
+    const url = URL.createObjectURL(blob);
+    
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${fileName}.txt`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    
+    enqueueSnackbar(`File esportato: ${fileName}.txt`, { variant: 'success' });
+  };
+  
+  return (
+    <Box sx={{ width: '100%' }}>
+      {/* Tabs */}
+      <Box sx={{ borderBottom: 1, borderColor: 'divider' }}>
+        <Tabs 
+          value={activeTabIndex} 
+          onChange={handleTabChange}
+          variant="scrollable"
+          scrollButtons="auto"
+        >
+          {localKnowledgeBases.map((kb, index) => (
+            <Tab 
+              key={kb.id || index} 
+              label={kb.name || `Base ${index + 1}`}
+              disabled={disabled}
+            />
+          ))}
+          
+          <Tab 
+            icon={<AddIcon />} 
+            onClick={(e) => {
+              e.stopPropagation();
+              handleAddKnowledgeBase();
+            }}
+            disabled={disabled}
+          />
+        </Tabs>
+      </Box>
+      
+      {/* Contenuto dei tab */}
+      {localKnowledgeBases.map((kb, index) => (
+        <Box
+          key={kb.id || index}
+          role="tabpanel"
+          hidden={activeTabIndex !== index}
+          id={`knowledge-base-tabpanel-${index}`}
+          aria-labelledby={`knowledge-base-tab-${index}`}
+          sx={{ mt: 2 }}
+        >
+          {activeTabIndex === index && (
+            <Box>
+              <Box sx={{ display: 'flex', alignItems: 'center', mb: 2 }}>
+                <TextField
+                  label="Nome Base di Conoscenza"
+                  value={kb.name}
+                  onChange={(e) => handleKnowledgeBaseChange(index, 'name', e.target.value)}
+                  fullWidth
+                  disabled={disabled}
+                  InputProps={{
+                    endAdornment: (
+                      <InputAdornment position="end">
+                        <IconButton
+                          onClick={() => handleRemoveKnowledgeBase(index)}
+                          edge="end"
+                          disabled={disabled || localKnowledgeBases.length <= 1}
+                        >
+                          <DeleteIcon />
+                        </IconButton>
+                      </InputAdornment>
+                    )
+                  }}
+                />
+              </Box>
+              
+              <TextField
+                label="Contenuto"
+                value={kb.content}
+                onChange={(e) => handleKnowledgeBaseChange(index, 'content', e.target.value)}
+                fullWidth
+                multiline
+                rows={10}
+                disabled={disabled}
+                sx={{ mb: 2 }}
+              />
+              
+              <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <FormControlLabel
+                  control={
+                    <Switch
+                      checked={kb.active}
+                      onChange={(e) => handleKnowledgeBaseChange(index, 'active', e.target.checked)}
+                      disabled={disabled}
+                    />
+                  }
+                  label="Attiva"
+                />
+                
+                <Box>
+                  <Button
+                    startIcon={<UploadIcon />}
+                    onClick={() => setFileUploadDialog(true)}
+                    disabled={disabled}
+                    sx={{ mr: 1 }}
+                  >
+                    Importa
+                  </Button>
+                  <Button
+                    startIcon={<DownloadIcon />}
+                    onClick={handleFileExport}
+                    disabled={disabled || !kb.content}
+                  >
+                    Esporta
+                  </Button>
+                </Box>
+              </Box>
+            </Box>
+          )}
+        </Box>
+      ))}
+      
+      {/* Input file nascosto */}
+      <input
+        type="file"
+        ref={fileInputRef}
+        style={{ display: 'none' }}
+        accept=".txt,.md,.doc,.docx,.pdf"
+        onChange={handleFileImport}
+      />
+      
+      {/* Dialog per upload file */}
+      <Dialog open={fileUploadDialog} onClose={() => setFileUploadDialog(false)}>
+        <DialogTitle>
+          <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <Typography variant="h6">Importa File</Typography>
+            <IconButton onClick={() => setFileUploadDialog(false)}>
+              <CloseIcon />
+            </IconButton>
+          </Box>
+        </DialogTitle>
+        <DialogContent>
+          <Typography variant="body1" gutterBottom>
+            Seleziona un file da importare come base di conoscenza. Il contenuto del file verrà caricato nel campo di testo.
+          </Typography>
+          <Typography variant="body2" color="text.secondary" sx={{ my: 2 }}>
+            Formati supportati: .txt, .md, .doc, .docx, .pdf
+          </Typography>
+          <Box sx={{ display: 'flex', justifyContent: 'center', mt: 2 }}>
+            <Button
+              variant="contained"
+              startIcon={<UploadIcon />}
+              onClick={() => fileInputRef.current.click()}
+            >
+              Seleziona File
+            </Button>
+          </Box>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setFileUploadDialog(false)}>
+            Annulla
+          </Button>
+        </DialogActions>
+      </Dialog>
+    </Box>
+  );
+};
+
+export default KnowledgeBaseEditor;
+
+
+
+# ====== File: /var/www/html/insightg/wup/r_wup/src/components/modules/ChatBot/components/ChatInterface.jsx ======
+// src/components/modules/ChatBot/components/ChatInterface.jsx
+import React, { useState, useRef, useEffect } from 'react';
+import { 
+  Box, 
+  Paper, 
+  TextField, 
+  IconButton, 
+  Typography, 
+  Avatar,
+  Divider,
+  Button,
+  CircularProgress,
+  Alert,
+  useTheme
+} from '@mui/material';
+import { 
+  Send as SendIcon,
+  Refresh as RefreshIcon,
+  Person as PersonIcon,
+  MoreVert as MoreVertIcon
+} from '@mui/icons-material';
+import useChatBotStore from '../stores/chatBotStore';
+import chatBotApi from '../api/chatBotApi';
+import Message from './common/Message';
+import TypingIndicator from './common/TypingIndicator';
+import { useSnackbar } from 'notistack';
+
+const ChatInterface = () => {
+  const { enqueueSnackbar } = useSnackbar();
+  const theme = useTheme();
+  const messageContainerRef = useRef(null);
+  
+  const [messageInput, setMessageInput] = useState('');
+  const [error, setError] = useState(null);
+  
+  // Accesso allo store
+  const { 
+    chatHistory, 
+    addMessage, 
+    isTyping, 
+    setTyping, 
+    currentProfileId, 
+    profiles,
+    getCurrentProfile,
+    clearChatHistory
+  } = useChatBotStore();
+  
+  const currentProfile = getCurrentProfile();
+  
+  // Scroll alla fine dei messaggi quando la chat history cambia
+  useEffect(() => {
+    if (messageContainerRef.current) {
+      messageContainerRef.current.scrollTop = messageContainerRef.current.scrollHeight;
+    }
+  }, [chatHistory, isTyping]);
+  
+  // Invia messaggio quando l'utente preme invio o clicca sul pulsante
+  const handleSendMessage = async () => {
+    if (!messageInput.trim() || isTyping) return;
+    
+    // Aggiungi il messaggio dell'utente alla chat
+    addMessage(messageInput, 'user');
+    setMessageInput('');
+    
+    // Mostra l'indicatore di digitazione
+    setTyping(true);
+    
+    try {
+      setError(null);
+      
+      // Prepara i dati per la richiesta API
+      const requestData = {
+        message: messageInput,
+        history: chatHistory.slice(-3),  // Ultimi 3 messaggi per contesto
+        profileId: currentProfileId || 'default'
+      };
+      
+      // Chiamata API
+      const response = await chatBotApi.getBotResponse(requestData);
+      
+      if (response.error) {
+        throw new Error(response.message || 'Errore nella risposta del bot');
+      }
+      
+      // Aggiungi la risposta del bot alla chat
+      addMessage(response.message, 'bot');
+    } catch (error) {
+      console.error('Error getting bot response:', error);
+      setError('Si è verificato un errore nella comunicazione con il bot.');
+      
+      // Aggiungi un messaggio di errore alla chat
+      addMessage('Mi dispiace, si è verificato un errore nella comunicazione.', 'bot');
+    } finally {
+      // Nascondi l'indicatore di digitazione
+      setTyping(false);
+    }
+  };
+  
+  // Gestione tasto invio
+  const handleKeyPress = (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      handleSendMessage();
+    }
+  };
+  
+  // Gestione reset chat
+  const handleResetChat = () => {
+    clearChatHistory();
+    
+    // Invia un messaggio di benvenuto se c'è un profilo corrente
+    if (currentProfile) {
+      addMessage(currentProfile.welcome || 'Ciao! Come posso aiutarti?', 'bot');
+    } else {
+      addMessage('Ciao! Come posso aiutarti?', 'bot');
+    }
+  };
+  
+  // Se non c'è un profilo selezionato, mostra un messaggio informativo
+  if (!currentProfile) {
+    return (
+      <Box 
+        sx={{ 
+          display: 'flex', 
+          flexDirection: 'column', 
+          justifyContent: 'center', 
+          alignItems: 'center', 
+          height: '100%', 
+          p: 3 
+        }}
+      >
+        <Typography variant="h5" gutterBottom>
+          Nessun profilo attivo
+        </Typography>
+        <Typography variant="body1" align="center" sx={{ mb: 2 }}>
+          Seleziona un profilo dalla tab "PROFILI" per iniziare a chattare.
+        </Typography>
+        <Button 
+          variant="contained" 
+          color="primary" 
+          onClick={() => {
+            // Naviga alla tab dei profili
+            document.getElementById('tab-1').click();
+          }}
+        >
+          Vai ai Profili
+        </Button>
+      </Box>
+    );
+  }
+  
+  // Se la chat history è vuota, aggiungi un messaggio di benvenuto
+  useEffect(() => {
+    if (currentProfile && chatHistory.length === 0) {
+      addMessage(currentProfile.welcome || `Ciao! Sono ${currentProfile.name}. Come posso aiutarti?`, 'bot');
+    }
+  }, [currentProfile, chatHistory.length]);
+  
+  return (
+    <Box sx={{ 
+      display: 'flex', 
+      flexDirection: 'column', 
+      height: '100%', 
+      width: '100%',
+      overflow: 'hidden'
+    }}>
+      {/* Header della chat */}
+      <Paper 
+        elevation={1} 
+        sx={{ 
+          p: 2, 
+          display: 'flex', 
+          alignItems: 'center', 
+          borderBottom: `1px solid ${theme.palette.divider}`,
+          zIndex: 1
+        }}
+      >
+        <Avatar sx={{ mr: 2, bgcolor: theme.palette.primary.main }}>
+          <PersonIcon />
+        </Avatar>
+        <Box sx={{ flexGrow: 1 }}>
+          <Typography variant="h6" component="div">
+            {currentProfile?.name || 'Bot'}
+          </Typography>
+          <Typography variant="body2" color="text.secondary">
+            {isTyping ? 'Sta scrivendo...' : 'Online'}
+          </Typography>
+        </Box>
+        <Button 
+          startIcon={<RefreshIcon />} 
+          variant="outlined" 
+          onClick={handleResetChat}
+          size="small"
+        >
+          Nuova Chat
+        </Button>
+      </Paper>
+      
+      {/* Contenitore messaggi */}
+      <Box 
+        ref={messageContainerRef}
+        sx={{ 
+          flexGrow: 1, 
+          overflowY: 'auto', 
+          p: 2,
+          bgcolor: '#f5f5f5',
+          display: 'flex',
+          flexDirection: 'column'
+        }}
+      >
+        {/* Messaggi */}
+        {chatHistory.map((msg, index) => (
+          <Message 
+            key={index}
+            message={msg.message}
+            type={msg.type}
+            timestamp={msg.timestamp}
+          />
+        ))}
+        
+        {/* Indicatore di digitazione */}
+        {isTyping && <TypingIndicator />}
+        
+        {/* Errore */}
+        {error && (
+          <Alert 
+            severity="error"
+            sx={{ mb: 2, maxWidth: '75%', alignSelf: 'center' }}
+            onClose={() => setError(null)}
+          >
+            {error}
+          </Alert>
+        )}
+      </Box>
+      
+      {/* Input messaggio */}
+      <Paper 
+        elevation={3} 
+        sx={{ 
+          p: 2, 
+          display: 'flex', 
+          alignItems: 'center', 
+          gap: 1,
+          borderTop: `1px solid ${theme.palette.divider}`
+        }}
+      >
+        <TextField
+          fullWidth
+          multiline
+          maxRows={4}
+          placeholder="Scrivi un messaggio..."
+          value={messageInput}
+          onChange={(e) => setMessageInput(e.target.value)}
+          onKeyPress={handleKeyPress}
+          disabled={isTyping}
+          variant="outlined"
+          size="small"
+        />
+        <IconButton 
+          color="primary" 
+          onClick={handleSendMessage} 
+          disabled={!messageInput.trim() || isTyping}
+        >
+          {isTyping ? <CircularProgress size={24} /> : <SendIcon />}
+        </IconButton>
+      </Paper>
+    </Box>
+  );
+};
+
+export default ChatInterface;
+
+
+
+# ====== File: /var/www/html/insightg/wup/r_wup/src/components/modules/ChatBot/components/ProfileManager.jsx ======
+// src/components/modules/ChatBot/components/ProfileManager.jsx
+import React, { useState } from 'react';
+import { 
+  Box, 
+  Grid, 
+  Paper, 
+  Typography, 
+  Button, 
+  TextField, 
+  Dialog, 
+  DialogTitle, 
+  DialogContent, 
+  DialogActions,
+  FormControlLabel,
+  Switch,
+  Divider,
+  IconButton,
+  CircularProgress,
+  Alert
+} from '@mui/material';
+import { 
+  Add as AddIcon,
+  Close as CloseIcon,
+  Save as SaveIcon
+} from '@mui/icons-material';
+import { useSnackbar } from 'notistack';
+import useChatBotStore from '../stores/chatBotStore';
+import chatBotApi from '../api/chatBotApi';
+import ProfileCard from './common/ProfileCard';
+import KnowledgeBaseEditor from './KnowledgeBaseEditor';
+
+const ProfileManager = () => {
+  const { enqueueSnackbar } = useSnackbar();
+  
+  // Stati locali
+  const [isDialogOpen, setIsDialogOpen] = useState(false);
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState(null);
+  const [deleteConfirmation, setDeleteConfirmation] = useState(null);
+  
+  // Form state
+  const [formData, setFormData] = useState({
+    id: null,
+    name: '',
+    definition: '',
+    welcome: '',
+    knowledgeBases: [],
+    isMobileDefault: false
+  });
+  
+  // Stato dallo store
+  const { 
+    profiles, 
+    currentProfileId, 
+    setCurrentProfileId, 
+    setProfiles,
+    addProfile,
+    updateProfile,
+    deleteProfile
+  } = useChatBotStore();
+  
+  // Apre il dialog per un nuovo profilo
+  const handleNewProfile = () => {
+    setFormData({
+      id: null,
+      name: '',
+      definition: '',
+      welcome: '',
+      knowledgeBases: [],
+      isMobileDefault: false
+    });
+    setIsDialogOpen(true);
+  };
+  
+  // Apre il dialog per modificare un profilo esistente
+  const handleEditProfile = (profileId) => {
+    const profile = profiles.find(p => p.id === profileId);
+    
+    if (profile) {
+      setFormData({
+        id: profile.id,
+        name: profile.name,
+        definition: profile.definition,
+        welcome: profile.welcome || '',
+        knowledgeBases: profile.knowledgeBases || [],
+        isMobileDefault: profile.isMobileDefault || false
+      });
+      setIsDialogOpen(true);
+    }
+  };
+  
+  // Gestisce la selezione di un profilo
+  const handleSelectProfile = (profileId) => {
+    setCurrentProfileId(profileId);
+  };
+  
+  // Gestisce il cambio di valori nel form
+  const handleFormChange = (e) => {
+    const { name, value, checked, type } = e.target;
+    setFormData(prev => ({
+      ...prev,
+      [name]: type === 'checkbox' ? checked : value
+    }));
+  };
+  
+  // Gestisce la modifica delle basi di conoscenza
+  const handleKnowledgeBasesChange = (knowledgeBases) => {
+    setFormData(prev => ({
+      ...prev,
+      knowledgeBases
+    }));
+  };
+  
+  // Salva il profilo
+  const handleSaveProfile = async () => {
+    // Validazione
+    if (!formData.name || !formData.definition) {
+      setError('Nome e definizione sono campi obbligatori');
+      return;
+    }
+    
+    setIsLoading(true);
+    setError(null);
+    
+    try {
+      // Se il profilo è impostato come default mobile, rimuovi il flag dagli altri profili lato server
+      if (formData.isMobileDefault) {
+        await chatBotApi.clearMobileDefault();
+      }
+      
+      // Salva il profilo
+      const response = await chatBotApi.saveProfile(formData);
+      
+      if (response.success) {
+        if (formData.id) {
+          // Aggiorna il profilo esistente nello store
+          updateProfile(formData.id, response.profile);
+          enqueueSnackbar('Profilo aggiornato con successo', { variant: 'success' });
+        } else {
+          // Aggiungi il nuovo profilo allo store
+          addProfile(response.profile);
+          enqueueSnackbar('Profilo creato con successo', { variant: 'success' });
+        }
+        
+        // Chiudi il dialog
+        setIsDialogOpen(false);
+      } else {
+        throw new Error(response.error || 'Errore nel salvataggio del profilo');
+      }
+    } catch (error) {
+      console.error('Error saving profile:', error);
+      setError(error.message || 'Si è verificato un errore durante il salvataggio');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+  
+  // Elimina un profilo
+  const handleDeleteProfile = async (profileId) => {
+    setDeleteConfirmation(null);
+    setIsLoading(true);
+    setError(null);
+    
+    try {
+      const response = await chatBotApi.deleteProfile(profileId);
+      
+      if (response.success) {
+        // Rimuovi il profilo dallo store
+        deleteProfile(profileId);
+        enqueueSnackbar('Profilo eliminato con successo', { variant: 'success' });
+      } else {
+        throw new Error(response.error || 'Errore nell\'eliminazione del profilo');
+      }
+    } catch (error) {
+      console.error('Error deleting profile:', error);
+      setError(error.message || 'Si è verificato un errore durante l\'eliminazione');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+  
+  return (
+    <Box sx={{ p: 3, width: '100%', overflow: 'auto' }}>
+      <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 3 }}>
+        <Typography variant="h5" component="h2">
+          Gestione Profili
+        </Typography>
+        
+        <Button
+          variant="contained"
+          color="primary"
+          startIcon={<AddIcon />}
+          onClick={handleNewProfile}
+        >
+          Nuovo Profilo
+        </Button>
+      </Box>
+      
+      {/* Visualizzazione dei profili */}
+      <Grid container spacing={2}>
+        {profiles.map(profile => (
+          <Grid item xs={12} sm={6} md={4} key={profile.id}>
+            <ProfileCard
+              profile={profile}
+              isSelected={profile.id === currentProfileId}
+              onSelect={handleSelectProfile}
+              onEdit={handleEditProfile}
+              onDelete={() => setDeleteConfirmation(profile)}
+            />
+          </Grid>
+        ))}
+        
+        {profiles.length === 0 && (
+          <Grid item xs={12}>
+            <Paper sx={{ p: 3, textAlign: 'center' }}>
+              <Typography variant="body1" gutterBottom>
+                Nessun profilo disponibile.
+              </Typography>
+              <Button
+                variant="outlined"
+                startIcon={<AddIcon />}
+                onClick={handleNewProfile}
+                sx={{ mt: 2 }}
+              >
+                Crea il tuo primo profilo
+              </Button>
+            </Paper>
+          </Grid>
+        )}
+      </Grid>
+      
+      {/* Dialog per creazione/modifica profilo */}
+      <Dialog 
+        open={isDialogOpen} 
+        onClose={() => !isLoading && setIsDialogOpen(false)}
+        fullWidth
+        maxWidth="md"
+      >
+        <DialogTitle>
+          <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <Typography variant="h6">
+              {formData.id ? 'Modifica Profilo' : 'Nuovo Profilo'}
+            </Typography>
+            <IconButton 
+              onClick={() => !isLoading && setIsDialogOpen(false)}
+              disabled={isLoading}
+            >
+              <CloseIcon />
+            </IconButton>
+          </Box>
+        </DialogTitle>
+        
+        <DialogContent dividers>
+          {error && (
+            <Alert severity="error" sx={{ mb: 2 }}>
+              {error}
+            </Alert>
+          )}
+          
+          <Grid container spacing={2}>
+            <Grid item xs={12}>
+              <TextField
+                name="name"
+                label="Nome Profilo"
+                value={formData.name}
+                onChange={handleFormChange}
+                fullWidth
+                required
+                disabled={isLoading}
+              />
+            </Grid>
+            
+            <Grid item xs={12}>
+              <TextField
+                name="definition"
+                label="Definizione Bot"
+                value={formData.definition}
+                onChange={handleFormChange}
+                fullWidth
+                required
+                multiline
+                rows={4}
+                disabled={isLoading}
+                helperText="Questa definizione sarà usata come contesto per Claude"
+              />
+            </Grid>
+            
+            <Grid item xs={12}>
+              <TextField
+                name="welcome"
+                label="Messaggio di Benvenuto"
+                value={formData.welcome}
+                onChange={handleFormChange}
+                fullWidth
+                multiline
+                rows={2}
+                disabled={isLoading}
+              />
+            </Grid>
+            
+            <Grid item xs={12}>
+              <FormControlLabel
+                control={
+                  <Switch
+                    name="isMobileDefault"
+                    checked={formData.isMobileDefault}
+                    onChange={handleFormChange}
+                    disabled={isLoading}
+                  />
+                }
+                label="Usa come profilo predefinito per versione mobile"
+              />
+              <Typography variant="caption" color="text.secondary" display="block">
+                Solo un profilo può essere impostato come predefinito per la versione mobile
+              </Typography>
+            </Grid>
+            
+            <Grid item xs={12}>
+              <Divider sx={{ my: 2 }} />
+              <Typography variant="h6" gutterBottom>
+                Basi di Conoscenza
+              </Typography>
+              
+              <KnowledgeBaseEditor
+                knowledgeBases={formData.knowledgeBases}
+                onChange={handleKnowledgeBasesChange}
+                disabled={isLoading}
+              />
+            </Grid>
+          </Grid>
+        </DialogContent>
+        
+        <DialogActions>
+          <Button 
+            onClick={() => setIsDialogOpen(false)} 
+            disabled={isLoading}
+          >
+            Annulla
+          </Button>
+          <Button 
+            onClick={handleSaveProfile} 
+            variant="contained" 
+            color="primary"
+            disabled={isLoading}
+            startIcon={isLoading ? <CircularProgress size={20} /> : <SaveIcon />}
+          >
+            {isLoading ? 'Salvataggio...' : 'Salva'}
+          </Button>
+        </DialogActions>
+      </Dialog>
+      
+      {/* Dialog di conferma eliminazione */}
+      <Dialog
+        open={!!deleteConfirmation}
+        onClose={() => !isLoading && setDeleteConfirmation(null)}
+      >
+        <DialogTitle>Conferma Eliminazione</DialogTitle>
+        <DialogContent>
+          <Typography>
+            Sei sicuro di voler eliminare il profilo "{deleteConfirmation?.name}"?
+          </Typography>
+          <Typography color="error" variant="body2" sx={{ mt: 2 }}>
+            Questa azione non può essere annullata.
+          </Typography>
+        </DialogContent>
+        <DialogActions>
+          <Button 
+            onClick={() => setDeleteConfirmation(null)} 
+            disabled={isLoading}
+          >
+            Annulla
+          </Button>
+          <Button 
+            onClick={() => handleDeleteProfile(deleteConfirmation?.id)} 
+            color="error" 
+            variant="contained"
+            disabled={isLoading}
+            startIcon={isLoading ? <CircularProgress size={20} /> : null}
+          >
+            {isLoading ? 'Eliminazione...' : 'Elimina'}
+          </Button>
+        </DialogActions>
+      </Dialog>
+    </Box>
+  );
+};
+
+export default ProfileManager;
+
+
+
+# ====== File: /var/www/html/insightg/wup/r_wup/src/components/modules/ChatBot/ChatBotContainer.jsx ======
+// src/components/modules/ChatBot/ChatBotContainer.jsx
+import React, { useState, useEffect } from 'react';
+import { Box, Grid, Paper, Tabs, Tab, CircularProgress } from '@mui/material';
+import { useSnackbar } from 'notistack';
+
+// API e Store
+import chatBotApi from './api/chatBotApi';
+import useChatBotStore from './stores/chatBotStore';
+
+// Componenti
+import ChatInterface from './components/ChatInterface';
+import ProfileManager from './components/ProfileManager';
+import SettingsPanel from './components/SettingsPanel';
+
+const ChatBotContainer = () => {
+  const { enqueueSnackbar } = useSnackbar();
+  const [activeTab, setActiveTab] = useState(0);
+  const [isLoading, setIsLoading] = useState(true);
+  
+  // Accesso allo store
+  const { 
+    profiles, 
+    setProfiles, 
+    currentProfileId, 
+    setCurrentProfileId 
+  } = useChatBotStore();
+  
+  // Carica i profili all'avvio
+  useEffect(() => {
+    const loadProfiles = async () => {
+      try {
+        setIsLoading(true);
+        const data = await chatBotApi.getProfiles();
+        setProfiles(data);
+        
+        // Se c'è almeno un profilo, imposta il primo come attivo
+        if (data.length > 0 && !currentProfileId) {
+          setCurrentProfileId(data[0].id);
+        }
+      } catch (error) {
+        enqueueSnackbar('Errore nel caricamento dei profili', { variant: 'error' });
+        console.error('Error loading profiles:', error);
+      } finally {
+        setIsLoading(false);
+      }
+    };
+    
+    loadProfiles();
+  }, []);
+  
+  // Gestione del cambio tab
+  const handleTabChange = (event, newValue) => {
+    setActiveTab(newValue);
+  };
+  
+  // Rendering condizionale in base al caricamento
+  if (isLoading) {
+    return (
+      <Box 
+        sx={{ 
+          display: 'flex', 
+          justifyContent: 'center', 
+          alignItems: 'center', 
+          height: '100%' 
+        }}
+      >
+        <CircularProgress />
+      </Box>
+    );
+  }
+  
+  return (
+    <Box 
+      sx={{ 
+        display: 'flex', 
+        flexDirection: 'column', 
+        height: '100%', 
+        width: '100%',
+        overflow: 'hidden'
+      }}
+    >
+      {/* Tabs di navigazione */}
+      <Box sx={{ borderBottom: 1, borderColor: 'divider', bgcolor: 'background.paper' }}>
+        <Tabs 
+          value={activeTab} 
+          onChange={handleTabChange} 
+          aria-label="chat bot tabs"
+          indicatorColor="primary"
+          textColor="primary"
+        >
+          <Tab label="CHAT" id="tab-0" />
+          <Tab label="PROFILI" id="tab-1" />
+          <Tab label="IMPOSTAZIONI" id="tab-2" />
+        </Tabs>
+      </Box>
+      
+      {/* Contenuto delle tab */}
+      <Box 
+        sx={{ 
+          flexGrow: 1, 
+          display: 'flex', 
+          overflow: 'hidden',
+          bgcolor: 'background.default'
+        }}
+      >
+        {/* Tab Chat */}
+        <Box
+          role="tabpanel"
+          hidden={activeTab !== 0}
+          id="tabpanel-0"
+          aria-labelledby="tab-0"
+          sx={{ 
+            width: '100%', 
+            height: '100%', 
+            display: activeTab !== 0 ? 'none' : 'flex' 
+          }}
+        >
+          <ChatInterface />
+        </Box>
+        
+        {/* Tab Profili */}
+        <Box
+          role="tabpanel"
+          hidden={activeTab !== 1}
+          id="tabpanel-1"
+          aria-labelledby="tab-1"
+          sx={{ 
+            width: '100%', 
+            height: '100%',
+            display: activeTab !== 1 ? 'none' : 'flex',
+            overflow: 'auto'
+          }}
+        >
+          <ProfileManager />
+        </Box>
+        
+        {/* Tab Impostazioni */}
+        <Box
+          role="tabpanel"
+          hidden={activeTab !== 2}
+          id="tabpanel-2"
+          aria-labelledby="tab-2"
+          sx={{ 
+            width: '100%', 
+            height: '100%',
+            display: activeTab !== 2 ? 'none' : 'flex',
+            overflow: 'auto'
+          }}
+        >
+          <SettingsPanel />
+        </Box>
+      </Box>
+    </Box>
+  );
+};
+
+export default ChatBotContainer;
+
+

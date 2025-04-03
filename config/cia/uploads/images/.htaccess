@@ -1,0 +1,3 @@
+# Permetti l'accesso alla directory e ai suoi contenuti
+Options +Indexes
+Require all granted

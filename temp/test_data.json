@@ -1,0 +1,51 @@
+{
+  "success": true,
+  "data": [
+    {
+      "id": 1,
+      "nome_account": "Test Account 1",
+      "sf_region": "Nord",
+      "sf_district": "Milano",
+      "sf_territory": "Centro",
+      "tipo_di_record_account": "Cliente",
+      "rrp_segment": "A",
+      "trade": "Retail",
+      "cap_spedizioni": "20100",
+      "statoprovincia_spedizioni": "Milano",
+      "citt_spedizioni": "Milano",
+      "indirizzo_spedizioni": "Via Test 1",
+      "telefono": "0123456789",
+      "mobile": "3401234567",
+      "email": "test1@example.com",
+      "field_rep": "Rep 1",
+      "numero_field_rep": "123",
+      "supervisor": "Super 1",
+      "numero_supervisor": "456"
+    },
+    {
+      "id": 2,
+      "nome_account": "Test Account 2",
+      "sf_region": "Sud",
+      "sf_district": "Roma",
+      "sf_territory": "Sud",
+      "tipo_di_record_account": "Prospect",
+      "rrp_segment": "B",
+      "trade": "Wholesale",
+      "cap_spedizioni": "00100",
+      "statoprovincia_spedizioni": "Roma",
+      "citt_spedizioni": "Roma",
+      "indirizzo_spedizioni": "Via Test 2",
+      "telefono": "0123456780",
+      "mobile": "3401234568",
+      "email": "test2@example.com",
+      "field_rep": "Rep 2",
+      "numero_field_rep": "789",
+      "supervisor": "Super 2",
+      "numero_supervisor": "012"
+    }
+  ],
+  "total": 2,
+  "page": 1,
+  "pageSize": 25,
+  "pages": 1
+}

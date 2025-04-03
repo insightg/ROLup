@@ -1,0 +1,4929 @@
+
+# ====== File: /var/www/html/insightg/wup/r_wup/src/components/modules/DashboardPM/DashboardPMContainer.jsx ======
+import React, { useState, useEffect } from 'react';
+import { 
+  Box, 
+  Typography, 
+  CircularProgress, 
+  Button, 
+  Grid, 
+  Paper,
+  Tabs,
+  Tab,
+  Chip
+} from '@mui/material';
+import {
+  Refresh as RefreshIcon,
+  FileDownload as ExportIcon,
+  TableChart as TableIcon,
+  AccountTree as TreeIcon,
+  SupervisorAccount as ManagerIcon
+} from '@mui/icons-material';
+import POSTable from './components/POSTable';
+import POSTree from './components/POSTree';
+import StatsPanel from './components/StatsPanel';
+import { usePMStore } from './stores/pmStore';
+import { fetchPMPOSList, fetchPMStats } from './api/pmApi';
+
+const DashboardPMContainer = () => {
+  const [viewMode, setViewMode] = useState(localStorage.getItem('preferredView') || 'table');
+  
+  const { 
+    stats, 
+    setStats, 
+    posList, 
+    setPosList,
+    refreshData,
+    userRole,
+    setUserRole,
+    isLoading
+  } = usePMStore();
+
+  // Funzione per il caricamento iniziale dei dati
+  const loadInitialData = async () => {
+    try {
+      // Carica i dati in parallelo
+      const [posResponse, statsResponse] = await Promise.all([
+        fetchPMPOSList(),
+        fetchPMStats()
+      ]);
+      
+      if (posResponse.success) {
+        setPosList(posResponse.data);
+        // Memorizza il ruolo dell'utente
+        if (posResponse.userRole) {
+          setUserRole(posResponse.userRole);
+        }
+      }
+      
+      if (statsResponse.success) {
+        setStats(statsResponse.data);
+        // Memorizza il ruolo dell'utente se non è già stato impostato
+        if (statsResponse.userRole && !userRole) {
+          setUserRole(statsResponse.userRole);
+        }
+      }
+    } catch (error) {
+      console.error('Error loading initial data:', error);
+    }
+  };
+
+  // Carica i dati all'avvio del componente
+  useEffect(() => {
+    loadInitialData();
+    
+    // Imposta un refresh periodico ogni 5 minuti
+    const intervalId = setInterval(() => {
+      if (document.visibilityState === 'visible') {
+        refreshData();
+      }
+    }, 5 * 60 * 1000);
+    
+    // Cleanup
+    return () => {
+      clearInterval(intervalId);
+    };
+  }, []);
+
+  // Gestione cambio vista
+  const handleViewToggle = () => {
+    const newView = viewMode === 'table' ? 'tree' : 'table';
+    setViewMode(newView);
+    localStorage.setItem('preferredView', newView);
+  };
+
+  // Deterimina il titolo della dashboard in base al ruolo
+  const getDashboardTitle = () => {
+    return userRole === 'manager' ? 'Dashboard Project Manager Supervisor' : 'Dashboard Project Manager';
+  };
+
+  return (
+    <Box sx={{ p: 2, height: '100%', display: 'flex', flexDirection: 'column' }}>
+      {/* Header con titolo e azioni */}
+      <Box sx={{ 
+        display: 'flex', 
+        justifyContent: 'space-between', 
+        alignItems: 'center', 
+        mb: 2
+      }}>
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+          <Typography variant="h5">{getDashboardTitle()}</Typography>
+          
+          {/* Badge che mostra se l'utente è un manager */}
+          {userRole === 'manager' && (
+            <Chip 
+              icon={<ManagerIcon />} 
+              label="Modalità Supervisore" 
+              color="primary" 
+              size="small"
+            />
+          )}
+        </Box>
+        
+        <Box sx={{ display: 'flex', gap: 1 }}>
+          <Button 
+            variant="outlined"
+            startIcon={viewMode === 'table' ? <TreeIcon /> : <TableIcon />}
+            onClick={handleViewToggle}
+          >
+            {viewMode === 'table' ? 'Vista Albero' : 'Vista Tabella'}
+          </Button>
+          
+          <Button 
+            variant="outlined"
+            startIcon={<RefreshIcon />}
+            onClick={refreshData}
+            disabled={isLoading}
+          >
+            Aggiorna
+          </Button>
+          
+          <Button
+            variant="contained"
+            startIcon={<ExportIcon />}
+            onClick={() => {/* implementare l'esportazione */}}
+            disabled={isLoading || posList.length === 0}
+          >
+            Esporta
+          </Button>
+        </Box>
+      </Box>
+
+      {/* Pannello statistiche */}
+      <StatsPanel stats={stats} isManager={userRole === 'manager'} />
+      
+      {/* Contenuto principale */}
+      <Box sx={{ flex: 1, mt: 2, overflow: 'hidden' }}>
+        {isLoading ? (
+          <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100%' }}>
+            <CircularProgress />
+          </Box>
+        ) : (
+          <>
+            {viewMode === 'table' ? (
+              <POSTable data={posList} isManager={userRole === 'manager'} />
+            ) : (
+              <POSTree data={posList} isManager={userRole === 'manager'} />
+            )}
+          </>
+        )}
+      </Box>
+    </Box>
+  );
+};
+
+export default DashboardPMContainer;
+
+
+
+
+# ====== File: /var/www/html/insightg/wup/r_wup/src/components/modules/DashboardPM/stores/pmStore.js ======
+import { create } from 'zustand';
+
+export const usePMStore = create((set, get) => ({
+  // Stato
+  posList: [],
+  stats: {
+    total: 0,
+    assegnati: 0,
+    in_lavorazione: 0,
+    standby: 0,
+    non_lavorabili: 0,
+    completati: 0
+  },
+  isLoading: false,
+  error: null,
+  userRole: null,
+  availableStates: [],
+  
+  // Azioni
+  setPosList: (posList) => set({ posList }),
+  setStats: (stats) => set({ stats }),
+  setLoading: (isLoading) => set({ isLoading }),
+  setError: (error) => set({ error }),
+  setUserRole: (role) => set({ userRole: role }),
+  setAvailableStates: (states) => set({ availableStates: states }),
+  
+  // Azione per caricare gli stati
+  loadAvailableStates: async () => {
+    try {
+      const response = await fetch('../../backend/b_tsis.php?action=getStatiAvanzamento');
+      const result = await response.json();
+      
+      if (result.success) {
+        const orderStates = result.data.filter(stato => 
+          stato.tipo === 'ordine' && stato.attivo
+        );
+        set({ availableStates: orderStates });
+      }
+    } catch (error) {
+      console.error('Error loading available states:', error);
+    }
+  },
+  
+  // Azione per ricaricare tutti i dati
+  refreshData: async () => {
+    set({ isLoading: true, error: null });
+    
+    try {
+      // Esegui le chiamate in parallelo
+      const [posResponse, statsResponse, statesResponse] = await Promise.all([
+        fetch('../../backend/r_tsis_pm.php?action=getPMPOSList').then(res => res.json()),
+        fetch('../../backend/r_tsis_pm.php?action=getPMStats').then(res => res.json()),
+        fetch('../../backend/b_tsis.php?action=getStatiAvanzamento').then(res => res.json())
+      ]);
+      
+      // Aggiorna lo stato con i dati delle risposte
+      if (posResponse.success) {
+        set({ 
+          posList: posResponse.data,
+          userRole: posResponse.userRole || get().userRole // Memorizza il ruolo dell'utente
+        });
+      } else {
+        set({ error: posResponse.error || 'Errore nel caricamento della lista POS' });
+      }
+      
+      if (statsResponse.success) {
+        set({ 
+          stats: statsResponse.data,
+          userRole: get().userRole || statsResponse.userRole 
+        });
+      }
+      
+      // Aggiorna stati
+      if (statesResponse.success) {
+        const orderStates = statesResponse.data.filter(stato => 
+          stato.tipo === 'ordine' && stato.attivo
+        );
+        set({ availableStates: orderStates });
+      }
+    } catch (error) {
+      console.error('Error refreshing data:', error);
+      set({ error: 'Errore nella comunicazione con il server' });
+    } finally {
+      set({ isLoading: false });
+    }
+  }
+}));
+
+
+# ====== File: /var/www/html/insightg/wup/r_wup/src/components/modules/DashboardPM/index.jsx ======
+import React from 'react';
+import { Box } from '@mui/material';
+import DashboardPMContainer from './DashboardPMContainer';
+
+/**
+ * Componente di punto di ingresso per il modulo DashboardPM.
+ */
+const DashboardPMModule = () => {
+  return (
+    <Box 
+      sx={{ 
+        height: '100%', 
+        width: '100%', 
+        display: 'flex',
+        flexDirection: 'column',
+        overflow: 'hidden' 
+      }}
+    >
+      <DashboardPMContainer />
+    </Box>
+  );
+};
+
+export default DashboardPMModule;
+
+
+
+
+# ====== File: /var/www/html/insightg/wup/r_wup/src/components/modules/DashboardPM/api/pmApi.js ======
+// src/components/modules/DashboardPM/api/pmApi.js
+
+/**
+ * Funzione base per le chiamate API
+ * @param {string} endpoint - Endpoint API
+ * @param {Object} options - Opzioni fetch
+ * @returns {Promise<Object>} - Promise con la risposta
+ */
+const apiCall = async (endpoint, options = {}) => {
+    try {
+      const response = await fetch(endpoint, {
+        ...options,
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Requested-With': 'XMLHttpRequest',
+          ...(options.headers || {})
+        }
+      });
+      
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+      
+      return await response.json();
+    } catch (error) {
+      console.error('API call error:', error);
+      return { success: false, error: error.message };
+    }
+  };
+  
+  /**
+   * Recupera la lista dei POS assegnati al PM
+   * @returns {Promise<Object>} - Promise con i dati dei POS
+   */
+  export const fetchPMPOSList = () => {
+    return apiCall('../../backend/r_tsis_pm.php?action=getPMPOSList');
+  };
+  
+  /**
+   * Recupera le statistiche del PM
+   * @returns {Promise<Object>} - Promise con le statistiche
+   */
+  export const fetchPMStats = () => {
+    return apiCall('../../backend/r_tsis_pm.php?action=getPMStats');
+  };
+  
+  /**
+   * Aggiorna lo stato di un POS
+   * @param {number} posId - ID del POS
+   * @param {string} status - Nuovo stato
+   * @param {string} reason - Motivo del cambiamento
+   * @returns {Promise<Object>} - Promise con il risultato
+   */
+  export const updatePOSStatus = (posId, status, reason) => {
+    return apiCall('../../backend/r_tsis_pm.php', {
+      method: 'POST',
+      body: JSON.stringify({
+        action: 'updatePOSStatus',
+        pos_id: posId,
+        status: status,
+        reason: reason
+      })
+    });
+  };
+  
+  /**
+   * Recupera i task per un ordine specifico
+   * @param {number} posOrderId - ID dell'ordine POS
+   * @returns {Promise<Object>} - Promise con i task
+   */
+  export const fetchTasksForOrder = (posOrderId) => {
+    return apiCall(`../../backend/b_tsis_task.php?action=getOrderTasks&order_id=${posOrderId}`);
+  };
+  
+  /**
+   * Aggiorna lo stato di un subtask
+   * @param {number} posOrderId - ID dell'ordine POS
+   * @param {string} taskId - ID del task
+   * @param {string} subtaskId - ID del subtask
+   * @param {string} newState - Nuovo stato
+   * @returns {Promise<Object>} - Promise con il risultato
+   */
+  export const updateTaskState = (posOrderId, taskId, subtaskId, newState) => {
+    return apiCall('../../backend/b_tsis_task.php', {
+      method: 'POST',
+      body: JSON.stringify({
+        action: 'updateSubtaskState',
+        order_id: posOrderId,
+        task_id: taskId,
+        subtask_id: subtaskId,
+        new_state: newState
+      })
+    });
+  };
+  
+  /**
+   * Recupera i documenti per un POS
+   * @param {number} posId - ID del POS
+   * @returns {Promise<Object>} - Promise con i documenti
+   */
+  export const fetchDocuments = (posId) => {
+    return apiCall(`../../backend/r_tsis_pm.php?action=getDocuments&pos_id=${posId}`);
+  };
+  
+  /**
+   * Recupera i dettagli di un POS
+   * @param {number} posId - ID del POS
+   * @returns {Promise<Object>} - Promise con i dettagli
+   */
+  export const fetchPOSDetails = (posId) => {
+    return apiCall(`../../backend/r_tsis_pm.php?action=getPOSDetails&pos_id=${posId}`);
+  };
+
+
+# ====== File: /var/www/html/insightg/wup/r_wup/src/components/modules/DashboardPM/components/OrderDetailPanel.jsx ======
+// src/components/modules/DashboardPM/components/OrderDetailPanel.jsx
+import React, { useState, useEffect, useCallback } from 'react';
+import {
+  Box,
+  Paper,
+  Typography,
+  Drawer,
+  IconButton,
+  CircularProgress,
+  Divider,
+  List,
+  ListItem,
+  ListItemIcon,
+  ListItemText,
+  Collapse,
+  Chip,
+  Badge,
+  Tooltip,
+  LinearProgress,
+  Alert,
+  Button,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogActions,
+  TextField,
+  FormControl,
+  InputLabel,
+  Select,
+  MenuItem,
+  FormControlLabel,
+  Checkbox
+} from '@mui/material';
+import {
+  Close as CloseIcon,
+  KeyboardArrowDown as ChevronDown,
+  KeyboardArrowRight as ChevronRight,
+  Assignment as TaskIcon,
+  CheckCircle as CompletedIcon,
+  Schedule as PendingIcon,
+  Error as ErrorIcon,
+  Refresh as RefreshIcon,
+  Edit as EditIcon,
+  Save as SaveIcon
+} from '@mui/icons-material';
+import { Package } from 'lucide-react';
+
+/**
+ * Componente de detalle ordine ispirato a OrderDetails del POSDashboard
+ */
+const OrderDetailPanel = ({ posOrderId, onClose, onUpdate }) => {
+  const [order, setOrder] = useState(null);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState(null);
+  const [expandedTaskIds, setExpandedTaskIds] = useState({});
+  
+  // States for edit functionality
+  const [selectedSubtask, setSelectedSubtask] = useState(null);
+  const [editDialogOpen, setEditDialogOpen] = useState(false);
+  const [editFormData, setEditFormData] = useState({
+    stato: '',
+    description: '',
+    exclude_from_completion: false,
+    fields: []
+  });
+  const [availableStates, setAvailableStates] = useState([]);
+  const [loadingStates, setLoadingStates] = useState(false);
+  
+  // Carica i dettagli dell'ordine
+  useEffect(() => {
+    const loadOrderDetails = async () => {
+      if (!posOrderId) return;
+      
+      try {
+        setIsLoading(true);
+        setError(null);
+        
+        const response = await fetch(`../../backend/b_tsis.php?action=getOrderTasks&order_id=${posOrderId}`, {
+          credentials: 'same-origin',
+          headers: { 'Accept': 'application/json' }
+        });
+
+        if (!response.ok) {
+          throw new Error(`Error: ${response.status}`);
+        }
+
+        const result = await response.json();
+        
+        if (result.success) {
+          setOrder(result.data);
+          
+          // Espandi il primo task automaticamente
+          if (result.data?.tasks?.length > 0) {
+            setExpandedTaskIds({ [result.data.tasks[0].id]: true });
+          }
+        } else {
+          throw new Error(result.error || 'Errore nel caricamento dei dettagli dell\'ordine');
+        }
+      } catch (error) {
+        console.error('Error loading order details:', error);
+        setError('Errore nella comunicazione con il server');
+      } finally {
+        setIsLoading(false);
+      }
+    };
+    
+    loadOrderDetails();
+  }, [posOrderId]);
+  
+  // Load available states
+  const loadAvailableStates = useCallback(async () => {
+    try {
+      setLoadingStates(true);
+      const response = await fetch('../../backend/b_tsis.php?action=getStatiAvanzamento', {
+        credentials: 'same-origin',
+        headers: { 'Accept': 'application/json' }
+      });
+
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+
+      const result = await response.json();
+      
+      if (result.success && Array.isArray(result.data)) {
+        // Filter for subtask states
+        const subtaskStates = result.data.filter(s => s.tipo === 'subtask' && s.attivo);
+        setAvailableStates(subtaskStates);
+      } else {
+        throw new Error('Invalid data format');
+      }
+    } catch (error) {
+      console.error('Error loading states:', error);
+    } finally {
+      setLoadingStates(false);
+    }
+  }, []);
+  
+  // Gestione espansione/compressione task
+  const handleToggleTask = useCallback((taskId) => {
+    setExpandedTaskIds(prev => ({
+      ...prev,
+      [taskId]: !prev[taskId]
+    }));
+  }, []);
+
+  // Aggiorna lo stato di un subtask
+  const handleUpdateSubtask = async (taskId, subtaskId, newState) => {
+    if (!order) return;
+    
+    try {
+      setIsLoading(true);
+      
+      const response = await fetch('../../backend/b_tsis.php?action=updateTaskState', {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded'
+        },
+        body: new URLSearchParams({
+          order_id: posOrderId,
+          task_title: findTaskById(taskId)?.title || '',
+          subtask_title: findSubtaskById(taskId, subtaskId)?.title || '',
+          stato: newState
+        })
+      });
+
+      if (!response.ok) {
+        throw new Error('Network response was not ok');
+      }
+
+      const result = await response.json();
+      
+      if (result.success) {
+        // Aggiorna lo stato locale dell'ordine
+        setOrder(prev => {
+          if (!prev) return prev;
+          
+          const updatedTasks = prev.tasks.map(task => {
+            if (task.id === taskId) {
+              const updatedSubtasks = task.subtasks.map(subtask => {
+                if (subtask.id === subtaskId) {
+                  return { ...subtask, stato: newState };
+                }
+                return subtask;
+              });
+              
+              // Usa i valori restituiti dall'API per progress e stato del task
+              return {
+                ...task,
+                subtasks: updatedSubtasks,
+                progress: result.data.task_progress || task.progress,
+                stato: result.data.task_status || task.stato
+              };
+            }
+            return task;
+          });
+          
+          return {
+            ...prev,
+            tasks: updatedTasks,
+            progress: result.data.order_progress || prev.progress,
+            stato: result.data.order_status || prev.stato
+          };
+        });
+        
+        // Notifica il componente padre
+        if (onUpdate) {
+          onUpdate();
+        }
+      } else {
+        throw new Error(result.error || 'Errore nell\'aggiornamento dello stato');
+      }
+    } catch (error) {
+      console.error('Error updating subtask:', error);
+      setError('Errore nell\'aggiornamento dello stato');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  // Open edit dialog for a subtask
+  const handleEditSubtask = (taskId, subtaskId) => {
+    const task = findTaskById(taskId);
+    const subtask = findSubtaskById(taskId, subtaskId);
+    
+    if (!task || !subtask) return;
+    
+    setSelectedSubtask({
+      taskId,
+      subtaskId,
+      taskTitle: task.title,
+      subtaskTitle: subtask.title
+    });
+    
+    setEditFormData({
+      stato: subtask.stato || '',
+      description: subtask.description || '',
+      exclude_from_completion: !!subtask.exclude_from_completion,
+      fields: subtask.fields || []
+    });
+    
+    // Load available states if needed
+    if (availableStates.length === 0) {
+      loadAvailableStates();
+    }
+    
+    setEditDialogOpen(true);
+  };
+
+  // Close edit dialog
+  const handleCloseEditDialog = () => {
+    setEditDialogOpen(false);
+    setSelectedSubtask(null);
+  };
+
+  // Handle form input changes
+  const handleFormChange = (e) => {
+    const { name, value, checked, type } = e.target;
+    
+    setEditFormData(prev => ({
+      ...prev,
+      [name]: type === 'checkbox' ? checked : value
+    }));
+  };
+
+  // Handle field value changes
+  const handleFieldChange = (index, value) => {
+    setEditFormData(prev => {
+      const updatedFields = [...prev.fields];
+      updatedFields[index] = {
+        ...updatedFields[index],
+        value: value
+      };
+      return {
+        ...prev,
+        fields: updatedFields
+      };
+    });
+  };
+
+  // Save subtask changes
+  const handleSaveSubtask = async () => {
+    if (!selectedSubtask) return;
+    
+    try {
+      setIsLoading(true);
+      
+      const params = {
+        order_id: posOrderId,
+        task_title: selectedSubtask.taskTitle,
+        subtask_title: selectedSubtask.subtaskTitle,
+        stato: editFormData.stato,
+        description: editFormData.description,
+        exclude_from_completion: editFormData.exclude_from_completion ? '1' : '0'
+      };
+      
+      // Add field values
+      editFormData.fields.forEach((field, index) => {
+        params[field.field_name] = field.value;
+      });
+      
+      const response = await fetch('../../backend/b_tsis.php?action=updateTaskState', {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded'
+        },
+        body: new URLSearchParams(params)
+      });
+
+      if (!response.ok) {
+        throw new Error('Network response was not ok');
+      }
+
+      const result = await response.json();
+      
+      if (result.success) {
+        // Update order with result data
+        setOrder(prev => {
+          if (!prev) return prev;
+          
+          const updatedTasks = prev.tasks.map(task => {
+            if (task.id === selectedSubtask.taskId) {
+              const updatedSubtasks = task.subtasks.map(subtask => {
+                if (subtask.id === selectedSubtask.subtaskId) {
+                  return { 
+                    ...subtask, 
+                    stato: editFormData.stato,
+                    description: editFormData.description,
+                    exclude_from_completion: editFormData.exclude_from_completion,
+                    fields: editFormData.fields
+                  };
+                }
+                return subtask;
+              });
+              
+              return {
+                ...task,
+                subtasks: updatedSubtasks,
+                progress: result.data.task_progress || task.progress,
+                stato: result.data.task_status || task.stato
+              };
+            }
+            return task;
+          });
+          
+          return {
+            ...prev,
+            tasks: updatedTasks,
+            progress: result.data.order_progress || prev.progress,
+            stato: result.data.order_status || prev.stato
+          };
+        });
+        
+        // Close dialog and notify parent
+        handleCloseEditDialog();
+        
+        if (onUpdate) {
+          onUpdate();
+        }
+      } else {
+        throw new Error(result.error || 'Errore nell\'aggiornamento dello stato');
+      }
+    } catch (error) {
+      console.error('Error updating subtask:', error);
+      setError('Errore nell\'aggiornamento dello stato');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  // Helper to find task by ID
+  const findTaskById = (taskId) => {
+    if (!order || !order.tasks) return null;
+    return order.tasks.find(task => task.id === taskId);
+  };
+
+  // Helper to find subtask by ID
+  const findSubtaskById = (taskId, subtaskId) => {
+    const task = findTaskById(taskId);
+    if (!task || !task.subtasks) return null;
+    return task.subtasks.find(subtask => subtask.id === subtaskId);
+  };
+
+  // Componente per il pannello del subtask
+  const SubtaskPanel = ({ subtask, taskId }) => {
+    const [isExpanded, setIsExpanded] = useState(false);
+    
+    return (
+      <Paper variant="outlined" sx={{ mb: 1 }}>
+        <ListItem 
+          button 
+          onClick={() => setIsExpanded(!isExpanded)}
+          sx={{
+            borderLeft: subtask.exclude_from_completion ? '4px solid #f44336' : 'none',
+            backgroundColor: subtask.exclude_from_completion ? 'rgba(244, 67, 54, 0.08)' : 'inherit'
+          }}
+        >
+          <ListItemIcon>
+            {isExpanded ? <ChevronDown /> : <ChevronRight />}
+          </ListItemIcon>
+          <ListItemText 
+            primary={
+              <Typography 
+                variant="body2" 
+                sx={{ 
+                  textDecoration: subtask.exclude_from_completion ? 'line-through' : 'none',
+                  color: subtask.exclude_from_completion ? 'text.disabled' : 'text.primary'
+                }}
+              >
+                {subtask.title}
+              </Typography>
+            }
+          />
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+            <Chip 
+              label={getStatusLabel(subtask.stato)} 
+              color={getStatusColor(subtask.stato)}
+              size="small" 
+              variant="outlined"
+            />
+            
+            {/* Button for edit */}
+            <Tooltip title="Modifica subtask">
+              <IconButton 
+                size="small" 
+                color="primary"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  handleEditSubtask(taskId, subtask.id);
+                }}
+              >
+                <EditIcon fontSize="small" />
+              </IconButton>
+            </Tooltip>
+            
+            {/* Quick action buttons */}
+            {!subtask.exclude_from_completion && (
+              <Box sx={{ display: 'flex' }}>
+                {subtask.stato !== 'completato' && (
+                  <Tooltip title="Segna come completato">
+                    <IconButton 
+                      size="small" 
+                      color="success"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleUpdateSubtask(taskId, subtask.id, 'completato');
+                      }}
+                    >
+                      <CompletedIcon fontSize="small" />
+                    </IconButton>
+                  </Tooltip>
+                )}
+                
+                {subtask.stato === 'completato' && (
+                  <Tooltip title="Riapri">
+                    <IconButton 
+                      size="small" 
+                      color="primary"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleUpdateSubtask(taskId, subtask.id, 'in_lavorazione');
+                      }}
+                    >
+                      <PendingIcon fontSize="small" />
+                    </IconButton>
+                  </Tooltip>
+                )}
+              </Box>
+            )}
+          </Box>
+        </ListItem>
+        
+        <Collapse in={isExpanded}>
+          <Box sx={{ p: 2, borderTop: '1px solid', borderColor: 'divider' }}>
+            {/* Dettagli subtask */}
+            {subtask.description && (
+              <Box sx={{ mb: 2 }}>
+                <Typography variant="subtitle2" gutterBottom>
+                  Descrizione
+                </Typography>
+                <Paper variant="outlined" sx={{ p: 2 }}>
+                  <Typography variant="body2">
+                    {subtask.description}
+                  </Typography>
+                </Paper>
+              </Box>
+            )}
+            
+            {subtask.exclude_from_completion && (
+              <Alert severity="warning" sx={{ mb: 2 }}>
+                Questo subtask è escluso dal calcolo di completamento
+              </Alert>
+            )}
+            
+            {/* Campi personalizzati */}
+            {subtask.fields && subtask.fields.length > 0 && (
+              <Box sx={{ mt: 2 }}>
+                <Typography variant="subtitle2" gutterBottom>
+                  Campi personalizzati
+                </Typography>
+                <Divider sx={{ mb: 2 }} />
+                
+                {subtask.fields.map((field, index) => (
+                  <Box key={index} sx={{ mb: 2 }}>
+                    <Typography variant="caption" color="text.secondary" gutterBottom display="block">
+                      {field.label}:
+                    </Typography>
+                    
+                    {field.type === 'checkbox' ? (
+                      <Typography variant="body2">
+                        {field.value === '1' ? 'Sì' : 'No'}
+                      </Typography>
+                    ) : (
+                      <Typography variant="body2">
+                        {field.value || '-'}
+                      </Typography>
+                    )}
+                  </Box>
+                ))}
+              </Box>
+            )}
+          </Box>
+        </Collapse>
+      </Paper>
+    );
+  };
+
+  // Componente per il pannello del task
+const TaskPanel = ({ task }) => {
+  const isExpanded = !!expandedTaskIds[task.id];
+  
+  return (
+    <Paper elevation={2} sx={{ mb: 2 }}>
+      <ListItem button onClick={() => handleToggleTask(task.id)}>
+        <ListItemIcon>
+          {isExpanded ? <ChevronDown /> : <ChevronRight />}
+        </ListItemIcon>
+        <ListItemText 
+          primary={task.title}
+        />
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+          <Box sx={{ display: 'flex', alignItems: 'center' }}>
+            <Box sx={{ width: 100, mr: 1 }}>
+              <LinearProgress variant="determinate" value={task.progress || 0} sx={{ height: 10, borderRadius: 5 }} />
+            </Box>
+            <Box sx={{ minWidth: 35 }}>
+              <Typography variant="body2" color="text.secondary">
+                {task.progress || 0}%
+              </Typography>
+            </Box>
+          </Box>
+          <Chip 
+            label={getStatusLabel(task.stato)} 
+            color={getStatusColor(task.stato)}
+            size="small" 
+            variant="outlined"
+          />
+        </Box>
+      </ListItem>
+      
+      <Collapse in={isExpanded}>
+        <Box sx={{ p: 2, pt: 1, borderTop: '1px solid', borderColor: 'divider' }}>
+          {task.subtasks && task.subtasks.length > 0 ? (
+            task.subtasks.map(subtask => (
+              <SubtaskPanel 
+                key={subtask.id} 
+                subtask={subtask} 
+                taskId={task.id} 
+              />
+            ))
+          ) : (
+            <Typography color="text.secondary" align="center" sx={{ py: 2 }}>
+              Nessun subtask disponibile
+            </Typography>
+          )}
+        </Box>
+      </Collapse>
+    </Paper>
+  );
+};
+
+  // Helper function to get status label
+  const getStatusLabel = (status) => {
+    const statusMap = {
+      'nuovo': 'Nuovo',
+      'assegnato': 'Assegnato',
+      'in_lavorazione': 'In Lavorazione',
+      'in_attesa': 'In Attesa',
+      'completato': 'Completato',
+      'standby': 'In Standby',
+      'bloccato': 'Bloccato'
+    };
+    
+    return statusMap[status] || status;
+  };
+
+  // Helper function to get status color
+  const getStatusColor = (status) => {
+    const colorMap = {
+      'nuovo': 'default',
+      'assegnato': 'primary',
+      'in_lavorazione': 'info',
+      'in_attesa': 'warning',
+      'completato': 'success',
+      'standby': 'warning',
+      'bloccato': 'error'
+    };
+    
+    return colorMap[status] || 'default';
+  };
+
+  return (
+    <>
+      <Drawer
+        anchor="right"
+        open={Boolean(posOrderId)}
+        onClose={onClose}
+        PaperProps={{
+          sx: { width: { xs: '100%', sm: 600, md: 800 }, overflow: 'hidden' }
+        }}
+      >
+        <Box sx={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+          {/* Header */}
+
+{/* Header */}
+<Box sx={{ 
+  p: 2, 
+  display: 'flex', 
+  justifyContent: 'space-between', 
+  alignItems: 'center',
+  borderBottom: '1px solid',
+  borderColor: 'divider'
+}}>
+  {order ? (
+    <Box sx={{ mb: 1 }}>
+      {/* Riga 1: AREA : TERRITORIO : POS (più piccola) */}
+      <Typography variant="body2" color="text.secondary">
+        {order.sf_region ? 
+          `${order.sf_region || ''} : ${order.sf_territory || ''} : ${order.pos_name || ''}` 
+          : 
+          `${order.pos_name || ''}`
+        }
+      </Typography>
+      
+      {/* Riga 2: Numero ORDINE del DATA (più grande) */}
+      <Typography variant="h6" sx={{ fontWeight: 'bold', my: 0.5 }}>
+        Ordine {order.id} del {order.data_creazione ? new Date(order.data_creazione).toLocaleDateString() : ''}
+      </Typography>
+      
+      {/* Riga 3: TIPOLOGIA ORDINE (più piccola) */}
+      <Typography variant="body2" color="text.secondary">
+        {order.tipo_attivita_desc || 'Nessuna tipologia specificata'}
+      </Typography>
+      
+      {/* Riga 4: NOME PM (più piccola) */}
+      <Typography variant="body2" color="text.secondary">
+        PM: {order.pm_full_name || 'Non assegnato'}
+      </Typography>
+    </Box>
+  ) : (
+    <Typography variant="h6">
+      Dettaglio Ordine
+    </Typography>
+  )}
+  
+  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+    {order && (
+      <>
+        <Chip 
+          label={getStatusLabel(order.stato)}
+          color={getStatusColor(order.stato)}
+          size="small"
+        />
+        <Button 
+          startIcon={<RefreshIcon />}
+          size="small"
+          onClick={() => {
+            if (onUpdate) onUpdate();
+          }}
+        >
+          Aggiorna
+        </Button>
+      </>
+    )}
+    <IconButton onClick={onClose}>
+      <CloseIcon />
+    </IconButton>
+  </Box>
+</Box>
+          
+          {/* Contenuto */}
+          <Box sx={{ flexGrow: 1, overflow: 'auto', p: 2 }}>
+            {isLoading ? (
+              <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100%' }}>
+                <CircularProgress />
+              </Box>
+            ) : error ? (
+              <Alert severity="error" sx={{ mb: 2 }}>
+                {error}
+              </Alert>
+            ) : !order ? (
+              <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%' }}>
+                <Package size={48} />
+                <Typography variant="h6" sx={{ mt: 2 }}>
+                  Nessun dettaglio disponibile
+                </Typography>
+              </Box>
+            ) : (
+              <>
+                {/* Progress bar dell'ordine */}
+                <Box sx={{ mb: 3 }}>
+                  <Typography variant="subtitle1" gutterBottom>
+                    Avanzamento Ordine
+                  </Typography>
+                  <Box sx={{ display: 'flex', alignItems: 'center' }}>
+                    <Box sx={{ width: '100%', mr: 1 }}>
+                      <LinearProgress 
+                        variant="determinate" 
+                        value={order.progress || 0} 
+                        sx={{ height: 10, borderRadius: 5 }} 
+                      />
+                    </Box>
+                    <Box sx={{ minWidth: 35 }}>
+                      <Typography variant="body2" color="text.secondary">
+                        {order.progress || 0}%
+                      </Typography>
+                    </Box>
+                  </Box>
+                </Box>
+                
+                {/* Task */}
+                <Typography variant="subtitle1" gutterBottom>
+                  Task ({order.tasks?.length || 0})
+                </Typography>
+                
+                {order.tasks && order.tasks.length > 0 ? (
+                  order.tasks.map(task => (
+                    <TaskPanel key={task.id} task={task} />
+                  ))
+                ) : (
+                  <Paper sx={{ p: 3, textAlign: 'center' }}>
+                    <Typography color="text.secondary">
+                      Nessun task disponibile per questo ordine
+                    </Typography>
+                  </Paper>
+                )}
+              </>
+            )}
+          </Box>
+        </Box>
+      </Drawer>
+      
+      {/* Edit Dialog */}
+      <Dialog open={editDialogOpen} onClose={handleCloseEditDialog} maxWidth="md" fullWidth>
+        <DialogTitle>
+          Modifica Subtask
+        </DialogTitle>
+        <DialogContent dividers>
+          {/* Form fields */}
+          <Box sx={{ mt: 1 }}>
+            {/* Stato */}
+            <FormControl fullWidth margin="normal">
+              <InputLabel>Stato</InputLabel>
+              <Select
+                name="stato"
+                value={editFormData.stato}
+                onChange={handleFormChange}
+                label="Stato"
+                disabled={loadingStates}
+              >
+                {loadingStates ? (
+                  <MenuItem disabled>Caricamento stati...</MenuItem>
+                ) : (
+                  availableStates.map(state => (
+                    <MenuItem key={state.id} value={state.codice}>
+                      {state.descrizione}
+                    </MenuItem>
+                  ))
+                )}
+              </Select>
+            </FormControl>
+            
+            {/* Description */}
+            <TextField
+              name="description"
+              label="Descrizione"
+              value={editFormData.description}
+              onChange={handleFormChange}
+              fullWidth
+              multiline
+              rows={3}
+              margin="normal"
+            />
+            
+            {/* Exclude from completion */}
+            <FormControlLabel
+              control={
+                <Checkbox
+                  name="exclude_from_completion"
+                  checked={editFormData.exclude_from_completion}
+                  onChange={handleFormChange}
+                  color="primary"
+                />
+              }
+              label="Escludi dal calcolo di completamento"
+              sx={{ mt: 1, mb: 2 }}
+            />
+            
+            {/* Custom fields */}
+            {editFormData.fields && editFormData.fields.length > 0 && (
+              <Box sx={{ mt: 2 }}>
+                <Typography variant="h6" gutterBottom>
+                  Campi personalizzati
+                </Typography>
+                <Divider sx={{ mb: 2 }} />
+                
+                {editFormData.fields.map((field, index) => (
+                  <Box key={index} sx={{ mb: 2 }}>
+                    {field.type === 'checkbox' ? (
+                      <FormControlLabel
+                        control={
+                          <Checkbox
+                            checked={field.value === '1'}
+                            onChange={(e) => handleFieldChange(index, e.target.checked ? '1' : '0')}
+                            color="primary"
+                          />
+                        }
+                        label={field.label}
+                      />
+                    ) : field.type === 'listbox' ? (
+                      <FormControl fullWidth margin="normal">
+                        <InputLabel>{field.label}</InputLabel>
+                        <Select
+                          value={field.value || ''}
+                          onChange={(e) => handleFieldChange(index, e.target.value)}
+                          label={field.label}
+                        >
+                          {(field.options || []).map((option) => (
+                            <MenuItem key={option} value={option}>
+                              {option}
+                            </MenuItem>
+                          ))}
+                        </Select>
+                      </FormControl>
+                    ) : (
+                      <TextField
+                        label={field.label}
+                        value={field.value || ''}
+                        onChange={(e) => handleFieldChange(index, e.target.value)}
+                        fullWidth
+                        margin="normal"
+                        type={field.type === 'date' ? 'date' : 'text'}
+                      />
+                    )}
+                  </Box>
+                ))}
+              </Box>
+            )}
+          </Box>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={handleCloseEditDialog}>Annulla</Button>
+          <Button 
+            onClick={handleSaveSubtask} 
+            variant="contained" 
+            color="primary" 
+            startIcon={<SaveIcon />}
+            disabled={isLoading}
+          >
+            {isLoading ? <CircularProgress size={24} /> : 'Salva'}
+          </Button>
+        </DialogActions>
+      </Dialog>
+    </>
+  );
+};
+
+export default OrderDetailPanel;
+
+
+# ====== File: /var/www/html/insightg/wup/r_wup/src/components/modules/DashboardPM/components/TasksPanel.jsx ======
+import React, { useState, useEffect } from 'react';
+import {
+  Box,
+  Paper,
+  Typography,
+  IconButton,
+  Collapse,
+  Divider,
+  Chip,
+  CircularProgress,
+  LinearProgress,
+  Drawer
+} from '@mui/material';
+import {
+  Close as CloseIcon,
+  KeyboardArrowDown as ExpandIcon,
+  KeyboardArrowRight as CollapseIcon,
+  CheckCircle as CompletedIcon,
+  Pending as PendingIcon,
+  Error as ErrorIcon,
+  Refresh as RefreshIcon
+} from '@mui/icons-material';
+import { fetchTasksForOrder, updateTaskState } from '../api/pmApi';
+
+const TasksPanel = ({ posOrderId, onClose, onUpdate }) => {
+  const [tasks, setTasks] = useState([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [expandedTasks, setExpandedTasks] = useState({});
+  const [error, setError] = useState(null);
+
+  // Carica le attività per l'ordine al montaggio del componente
+  useEffect(() => {
+    const loadTasks = async () => {
+      try {
+        setIsLoading(true);
+        setError(null);
+        
+        const response = await fetchTasksForOrder(posOrderId);
+        
+        if (response.success) {
+          setTasks(response.data.tasks || []);
+          
+          // Espandi il primo task automaticamente se ce n'è almeno uno
+          if (response.data.tasks?.length > 0) {
+            setExpandedTasks({ [response.data.tasks[0].id]: true });
+          }
+        } else {
+          setError(response.error || 'Errore nel caricamento delle attività');
+        }
+      } catch (error) {
+        console.error('Error loading tasks:', error);
+        setError('Errore nella comunicazione con il server');
+      } finally {
+        setIsLoading(false);
+      }
+    };
+    
+    loadTasks();
+  }, [posOrderId]);
+
+  // Gestione espansione/compressione task
+  const handleToggleTask = (taskId) => {
+    setExpandedTasks(prev => ({
+      ...prev,
+      [taskId]: !prev[taskId]
+    }));
+  };
+
+  // Aggiorna lo stato di un subtask
+  const handleUpdateSubtask = async (taskId, subtaskId, newState) => {
+    try {
+      setIsLoading(true);
+      
+      const response = await updateTaskState(posOrderId, taskId, subtaskId, newState);
+      
+      if (response.success) {
+        // Aggiorna i task localmente
+        const updatedTasks = tasks.map(task => {
+          if (task.id === taskId) {
+            const updatedSubtasks = task.subtasks.map(subtask => {
+              if (subtask.id === subtaskId) {
+                return { ...subtask, stato: newState };
+              }
+              return subtask;
+            });
+            
+            // Calcola il nuovo progresso del task
+            const activeSubtasks = updatedSubtasks.filter(st => !st.exclude_from_completion);
+            const completedCount = activeSubtasks.filter(st => st.stato === 'completato').length;
+            const totalCount = activeSubtasks.length;
+            const newProgress = totalCount > 0 ? Math.round((completedCount / totalCount) * 100) : 0;
+            
+            // Determina il nuovo stato del task
+            let newTaskState = task.stato;
+            if (totalCount > 0) {
+              if (completedCount === totalCount) {
+                newTaskState = 'completato';
+              } else if (completedCount > 0) {
+                newTaskState = 'in_lavorazione';
+              }
+            }
+            
+            return {
+              ...task,
+              subtasks: updatedSubtasks,
+              progress: newProgress,
+              stato: newTaskState
+            };
+          }
+          return task;
+        });
+        
+        setTasks(updatedTasks);
+        
+        // Aggiorna la vista genitore
+        if (onUpdate) {
+          onUpdate();
+        }
+      } else {
+        setError(response.error || 'Errore nell\'aggiornamento dello stato');
+      }
+    } catch (error) {
+      console.error('Error updating subtask state:', error);
+      setError('Errore nella comunicazione con il server');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  // Funzione per formattare lo stato di un task/subtask
+  const formatStatus = (status) => {
+    const statusConfig = {
+      'completato': { label: 'Completato', color: 'success', icon: <CompletedIcon /> },
+      'in_lavorazione': { label: 'In Lavorazione', color: 'primary', icon: <PendingIcon /> },
+      'pending': { label: 'In Attesa', color: 'warning', icon: <PendingIcon /> },
+      'blocked': { label: 'Bloccato', color: 'error', icon: <ErrorIcon /> }
+    };
+    
+    const config = statusConfig[status] || { label: status, color: 'default', icon: <PendingIcon /> };
+    
+    return (
+      <Chip 
+        icon={config.icon}
+        label={config.label} 
+        color={config.color} 
+        size="small" 
+        variant="outlined"
+      />
+    );
+  };
+
+  return (
+    <Drawer
+      anchor="right"
+      open={true}
+      onClose={onClose}
+      PaperProps={{
+        sx: { width: { xs: '100%', sm: 450 }, overflow: 'hidden' }
+      }}
+    >
+      <Box sx={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+        {/* Header del pannello */}
+        <Box sx={{ 
+          p: 2, 
+          display: 'flex', 
+          justifyContent: 'space-between', 
+          alignItems: 'center',
+          borderBottom: 1,
+          borderColor: 'divider'
+        }}>
+          <Typography variant="h6">Attività</Typography>
+          <Box>
+            <IconButton onClick={() => setIsLoading(true)} disabled={isLoading} sx={{ mr: 1 }}>
+              <RefreshIcon />
+            </IconButton>
+            <IconButton onClick={onClose}>
+              <CloseIcon />
+            </IconButton>
+          </Box>
+        </Box>
+
+        {/* Contenuto del pannello */}
+        <Box sx={{ p: 2, flexGrow: 1, overflow: 'auto' }}>
+          {isLoading ? (
+            <Box sx={{ display: 'flex', justifyContent: 'center', p: 4 }}>
+              <CircularProgress />
+            </Box>
+          ) : error ? (
+            <Box sx={{ 
+              display: 'flex', 
+              justifyContent: 'center', 
+              alignItems: 'center',
+              flexDirection: 'column',
+              p: 4 
+            }}>
+              <ErrorIcon color="error" sx={{ fontSize: 48, mb: 2 }} />
+              <Typography color="error">{error}</Typography>
+            </Box>
+          ) : tasks.length === 0 ? (
+            <Box sx={{ 
+              display: 'flex', 
+              justifyContent: 'center', 
+              alignItems: 'center',
+              flexDirection: 'column',
+              p: 4 
+            }}>
+              <Typography>Nessuna attività disponibile</Typography>
+            </Box>
+          ) : (
+            <Box>
+              {tasks.map(task => (
+                <Paper key={task.id} elevation={1} sx={{ mb: 2, overflow: 'hidden' }}>
+                  {/* Header del task */}
+                  <Box 
+                    sx={{ 
+                      p: 2, 
+                      display: 'flex', 
+                      justifyContent: 'space-between', 
+                      alignItems: 'center',
+                      bgcolor: 'action.hover',
+                      cursor: 'pointer'
+                    }}
+                    onClick={() => handleToggleTask(task.id)}
+                  >
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                      {expandedTasks[task.id] ? <ExpandIcon /> : <CollapseIcon />}
+                      <Typography variant="subtitle1">{task.title}</Typography>
+                    </Box>
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                      {formatStatus(task.stato)}
+                    </Box>
+                  </Box>
+                  
+                  {/* Progress bar */}
+                  <LinearProgress 
+                    variant="determinate" 
+                    value={task.progress} 
+                    sx={{ height: 4 }}
+                  />
+                  
+                  {/* Subtasks */}
+                  <Collapse in={expandedTasks[task.id]}>
+                    <Box sx={{ p: 2 }}>
+                      <Typography variant="subtitle2" gutterBottom>
+                        Sottoattività ({task.subtasks.length})
+                      </Typography>
+                      
+                      <Divider sx={{ mb: 2 }} />
+                      
+                      {task.subtasks.map(subtask => (
+                        <Box 
+                          key={subtask.id} 
+                          sx={{ 
+                            p: 1.5, 
+                            mb: 1, 
+                            border: '1px solid',
+                            borderColor: 'divider',
+                            borderRadius: 1,
+                            display: 'flex',
+                            justifyContent: 'space-between',
+                            alignItems: 'center',
+                            opacity: subtask.exclude_from_completion ? 0.6 : 1
+                          }}
+                        >
+                          <Typography 
+                            variant="body2"
+                            sx={{
+                              textDecoration: subtask.exclude_from_completion ? 'line-through' : 'none'
+                            }}
+                          >
+                            {subtask.title}
+                          </Typography>
+                          
+                          <Box display="flex" gap={1} alignItems="center">
+                            {formatStatus(subtask.stato)}
+                            
+                            {/* Menu per cambio stato */}
+                            {!subtask.exclude_from_completion && (
+                              <Box sx={{ display: 'flex' }}>
+                                {subtask.stato !== 'completato' && (
+                                  <IconButton 
+                                    size="small" 
+                                    color="success"
+                                    onClick={() => handleUpdateSubtask(task.id, subtask.id, 'completato')}
+                                  >
+                                    <CompletedIcon fontSize="small" />
+                                  </IconButton>
+                                )}
+                                
+                                {subtask.stato === 'completato' && (
+                                  <IconButton 
+                                    size="small" 
+                                    color="primary"
+                                    onClick={() => handleUpdateSubtask(task.id, subtask.id, 'in_lavorazione')}
+                                  >
+                                    <PendingIcon fontSize="small" />
+                                  </IconButton>
+                                )}
+                              </Box>
+                            )}
+                          </Box>
+                        </Box>
+                      ))}
+                    </Box>
+                  </Collapse>
+                </Paper>
+              ))}
+            </Box>
+          )}
+        </Box>
+      </Box>
+    </Drawer>
+  );
+};
+
+export default TasksPanel;
+
+
+
+
+# ====== File: /var/www/html/insightg/wup/r_wup/src/components/modules/DashboardPM/components/POSTable.jsx ======
+// /var/www/html/insightg/wup/r_wup/src/components/modules/DashboardPM/components/POSTable.jsx
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import { 
+  Box, 
+  Paper, 
+  TableContainer, 
+  Table, 
+  TableHead, 
+  TableBody, 
+  TableRow, 
+  TableCell,
+  TablePagination,
+  TableSortLabel,
+  TextField,
+  InputAdornment,
+  IconButton,
+  Menu,
+  MenuItem,
+  Chip,
+  Avatar,
+  Tooltip,
+  Checkbox,
+  Button,
+  FormControl,
+  InputLabel,
+  Select,
+  Popover,
+  Typography,
+  Badge,
+  Divider,
+  Card,
+  CardContent,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogActions
+} from '@mui/material';
+import {
+  Search as SearchIcon,
+  MoreVert as MoreVertIcon,
+  Assignment as TasksIcon,
+  Edit as EditIcon,
+  Folder as FolderIcon,
+  SupervisorAccount as ManagerIcon,
+  FilterList as FilterListIcon,
+  Delete as DeleteIcon,
+  Clear as ClearIcon,
+  CheckBox as CheckBoxIcon,
+  Save as SaveIcon,
+  People as PeopleIcon,
+  Route as RouteIcon
+} from '@mui/icons-material';
+import { usePMStore } from '../stores/pmStore';
+import OrderDetailPanel from './OrderDetailPanel';
+import StatusPanel from './StatusPanel';
+import DocumentsPanel from './DocumentsPanel';
+import AssignPMPanel from './AssignPMPanel';
+import RouteOptimizerDialog from './RouteOptimizerDialog';
+import { useNavigate } from 'react-router-dom';
+
+// Componente per il filtro colonna
+const ColumnFilter = ({ column, onFilter, filterValue, availableValues }) => {
+  const [anchorEl, setAnchorEl] = useState(null);
+  const [value, setValue] = useState(filterValue || '');
+
+  const handleClick = (event) => {
+    setAnchorEl(event.currentTarget);
+  };
+
+  const handleClose = () => {
+    setAnchorEl(null);
+  };
+
+  const handleApply = () => {
+    onFilter(column, value);
+    handleClose();
+  };
+
+  const handleClear = () => {
+    setValue('');
+    onFilter(column, '');
+    handleClose();
+  };
+
+  const open = Boolean(anchorEl);
+
+  return (
+    <>
+      <IconButton 
+        size="small" 
+        onClick={handleClick}
+        color={filterValue ? 'primary' : 'default'}
+      >
+        <Badge color="primary" variant="dot" invisible={!filterValue}>
+          <FilterListIcon fontSize="small" />
+        </Badge>
+      </IconButton>
+      <Popover
+        open={open}
+        anchorEl={anchorEl}
+        onClose={handleClose}
+        anchorOrigin={{
+          vertical: 'bottom',
+          horizontal: 'center',
+        }}
+        transformOrigin={{
+          vertical: 'top',
+          horizontal: 'center',
+        }}
+      >
+        <Box sx={{ p: 2, width: 250 }}>
+          <Typography variant="subtitle2" gutterBottom>
+            Filtra per {column}
+          </Typography>
+          
+          {availableValues ? (
+            <FormControl fullWidth size="small" sx={{ mb: 2 }}>
+              <Select
+                value={value}
+                onChange={(e) => setValue(e.target.value)}
+                displayEmpty
+              >
+                <MenuItem value="">
+                  <em>Tutti</em>
+                </MenuItem>
+                {availableValues.map((option) => (
+                  <MenuItem key={option.value} value={option.value}>
+                    {option.label}
+                  </MenuItem>
+                ))}
+              </Select>
+            </FormControl>
+          ) : (
+            <TextField
+              size="small"
+              fullWidth
+              value={value}
+              onChange={(e) => setValue(e.target.value)}
+              placeholder="Filtra..."
+              sx={{ mb: 2 }}
+            />
+          )}
+          
+          <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
+            <Button 
+              size="small" 
+              startIcon={<ClearIcon />} 
+              onClick={handleClear}
+            >
+              Cancella
+            </Button>
+            <Button 
+              size="small" 
+              variant="contained" 
+              onClick={handleApply}
+            >
+              Applica
+            </Button>
+          </Box>
+        </Box>
+      </Popover>
+    </>
+  );
+};
+
+// Dialogo per assegnare PM in batch
+const BatchAssignPMDialog = ({ open, onClose, onAssign, selectedRows, pmList }) => {
+  const [selectedPM, setSelectedPM] = useState('');
+
+  const handleAssign = () => {
+    onAssign(selectedPM);
+    setSelectedPM('');
+  };
+
+  return (
+    <Dialog open={open} onClose={onClose} maxWidth="sm" fullWidth>
+      <DialogTitle>Assegna PM ai record selezionati</DialogTitle>
+      <DialogContent>
+        <Box sx={{ mt: 2 }}>
+          <Typography variant="body2" color="text.secondary" gutterBottom>
+            Stai per assegnare un PM a {selectedRows.length} record.
+          </Typography>
+          
+          <FormControl fullWidth sx={{ mt: 2 }}>
+            <InputLabel>Seleziona PM</InputLabel>
+            <Select
+              value={selectedPM}
+              onChange={(e) => setSelectedPM(e.target.value)}
+              label="Seleziona PM"
+            >
+              <MenuItem value="">
+                <em>Seleziona PM</em>
+              </MenuItem>
+              {pmList.map((pm) => (
+                <MenuItem key={pm.id} value={pm.id}>
+                  {pm.full_name || pm.username}
+                </MenuItem>
+              ))}
+            </Select>
+          </FormControl>
+        </Box>
+      </DialogContent>
+      <DialogActions>
+        <Button onClick={onClose}>Annulla</Button>
+        <Button 
+          onClick={handleAssign} 
+          variant="contained" 
+          disabled={!selectedPM}
+        >
+          Assegna
+        </Button>
+      </DialogActions>
+    </Dialog>
+  );
+};
+
+// Dialogo per cambio stato in batch
+const BatchChangeStatusDialog = ({ open, onClose, onChangeStatus, selectedRows, statiList }) => {
+  const [selectedStatus, setSelectedStatus] = useState('');
+  const [reason, setReason] = useState('');
+
+  const handleChangeStatus = () => {
+    onChangeStatus(selectedStatus, reason);
+    setSelectedStatus('');
+    setReason('');
+  };
+
+  return (
+    <Dialog open={open} onClose={onClose} maxWidth="sm" fullWidth>
+      <DialogTitle>Cambia stato dei record selezionati</DialogTitle>
+      <DialogContent>
+        <Box sx={{ mt: 2 }}>
+          <Typography variant="body2" color="text.secondary" gutterBottom>
+            Stai per modificare lo stato di {selectedRows.length} record.
+          </Typography>
+          
+          <FormControl fullWidth sx={{ mt: 2 }}>
+            <InputLabel>Nuovo stato</InputLabel>
+            <Select
+              value={selectedStatus}
+              onChange={(e) => setSelectedStatus(e.target.value)}
+              label="Nuovo stato"
+            >
+              <MenuItem value="">
+                <em>Seleziona stato</em>
+              </MenuItem>
+              {statiList.map((stato) => (
+                <MenuItem key={stato.codice} value={stato.codice}>
+                  {stato.descrizione}
+                </MenuItem>
+              ))}
+            </Select>
+          </FormControl>
+          
+          <TextField
+            margin="normal"
+            fullWidth
+            label="Motivazione (opzionale)"
+            multiline
+            rows={3}
+            value={reason}
+            onChange={(e) => setReason(e.target.value)}
+          />
+        </Box>
+      </DialogContent>
+      <DialogActions>
+        <Button onClick={onClose}>Annulla</Button>
+        <Button 
+          onClick={handleChangeStatus} 
+          variant="contained" 
+          disabled={!selectedStatus}
+        >
+          Aggiorna stato
+        </Button>
+      </DialogActions>
+    </Dialog>
+  );
+};
+
+const POSTable = ({ data, isManager = false }) => {
+  const navigate = useNavigate();
+  const [page, setPage] = useState(0);
+  const [rowsPerPage, setRowsPerPage] = useState(25);
+  const [searchTerm, setSearchTerm] = useState('');
+  const [orderBy, setOrderBy] = useState('nome_account');
+  const [order, setOrder] = useState('asc');
+  const [filteredData, setFilteredData] = useState([]);
+  
+  // Stato per i filtri di colonna
+  const [columnFilters, setColumnFilters] = useState({});
+  
+  // Stato per la selezione delle righe
+  const [selectedRows, setSelectedRows] = useState([]);
+  
+  // Toggle per visualizzare solo i record selezionati
+  const [showOnlySelected, setShowOnlySelected] = useState(false);
+  
+  // Stati per le azioni batch
+  const [batchActionAnchorEl, setBatchActionAnchorEl] = useState(null);
+  const [assignPMDialogOpen, setAssignPMDialogOpen] = useState(false);
+  const [changeStatusDialogOpen, setChangeStatusDialogOpen] = useState(false);
+  const [routeOptimizerDialogOpen, setRouteOptimizerDialogOpen] = useState(false);
+  
+  // Stato per i menù azioni
+  const [actionMenuAnchor, setActionMenuAnchor] = useState(null);
+  const [selectedRow, setSelectedRow] = useState(null);
+  
+  // Stato per i pannelli
+  const [activePanelType, setActivePanelType] = useState(null);
+  const [activePanelId, setActivePanelId] = useState(null);
+  
+  // Stato specifico per il panel OrderDetail
+  const [selectedOrderId, setSelectedOrderId] = useState(null);
+  
+  // Stati disponibili
+  const [availableStates, setAvailableStates] = useState([]);
+  const [pmList, setPMList] = useState([]);
+  
+  const { refreshData } = usePMStore();
+
+  // Carica stati disponibili all'avvio
+  useEffect(() => {
+    const fetchStatiAvanzamento = async () => {
+      try {
+        const response = await fetch('../../backend/b_tsis.php?action=getStatiAvanzamento');
+        const result = await response.json();
+        
+        if (result.success) {
+          // Filtra solo gli stati per gli ordini
+          const orderStates = result.data.filter(stato => 
+            stato.tipo === 'ordine' && stato.attivo
+          );
+          setAvailableStates(orderStates);
+        }
+      } catch (error) {
+        console.error('Error fetching stati avanzamento:', error);
+      }
+    };
+    
+    const fetchPMList = async () => {
+      if (isManager) {
+        try {
+          const response = await fetch('../../backend/b_tsis.php?action=getAvailablePMs');
+          const result = await response.json();
+          
+          if (result.success) {
+            setPMList(result.data);
+          }
+        } catch (error) {
+          console.error('Error fetching PM list:', error);
+        }
+      }
+    };
+    
+    fetchStatiAvanzamento();
+    fetchPMList();
+  }, [isManager]);
+
+  // Applica filtri e ordinamento
+  useEffect(() => {
+    let filtered = [...data];
+    
+    // Filtra solo i record selezionati se necessario
+    if (showOnlySelected) {
+      filtered = filtered.filter(row => selectedRows.includes(row.id));
+    }
+    
+    // Applica ricerca globale
+    if (searchTerm) {
+      const lowerSearchTerm = searchTerm.toLowerCase();
+      filtered = filtered.filter(row => 
+        (row.nome_account?.toLowerCase().includes(lowerSearchTerm)) ||
+        (row.tipo_attivita_desc?.toLowerCase().includes(lowerSearchTerm)) ||
+        (row.sf_region?.toLowerCase().includes(lowerSearchTerm)) ||
+        (row.sf_territory?.toLowerCase().includes(lowerSearchTerm)) ||
+        (row.rrp_segment?.toLowerCase().includes(lowerSearchTerm)) ||
+        (isManager && row.pm_full_name?.toLowerCase().includes(lowerSearchTerm))
+      );
+    }
+    
+    // Applica filtri per colonna
+    Object.entries(columnFilters).forEach(([column, value]) => {
+      if (value) {
+        filtered = filtered.filter(row => {
+          const fieldValue = row[column];
+          return fieldValue && fieldValue.toString().toLowerCase().includes(value.toLowerCase());
+        });
+      }
+    });
+    
+    // Applica ordinamento
+    filtered = filtered.sort((a, b) => {
+      const aValue = a[orderBy] || '';
+      const bValue = b[orderBy] || '';
+      
+      if (order === 'asc') {
+        return aValue.localeCompare(bValue);
+      } else {
+        return bValue.localeCompare(aValue);
+      }
+    });
+    
+    setFilteredData(filtered);
+    
+    // Reimposta la pagina a 0 quando cambiano i filtri
+    setPage(0);
+  }, [data, searchTerm, orderBy, order, columnFilters, isManager, showOnlySelected, selectedRows]);
+
+  // Gestori paginazione
+  const handleChangePage = (event, newPage) => {
+    setPage(newPage);
+  };
+
+  const handleChangeRowsPerPage = (event) => {
+    setRowsPerPage(parseInt(event.target.value, 10));
+    setPage(0);
+  };
+
+  // Gestore ordinamento
+  const handleRequestSort = (property) => {
+    const isAsc = orderBy === property && order === 'asc';
+    setOrder(isAsc ? 'desc' : 'asc');
+    setOrderBy(property);
+  };
+  
+  // Gestore filtri colonna
+  const handleColumnFilter = (column, value) => {
+    setColumnFilters(prev => ({
+      ...prev,
+      [column]: value
+    }));
+  };
+
+  // Gestori selezione righe
+  const handleSelectAllClick = (event) => {
+    if (event.target.checked) {
+      // Se viene selezionato tutto, aggiungi gli ID di tutte le righe filtrate
+      const newSelected = filteredData.map(row => row.id);
+      setSelectedRows(newSelected);
+      return;
+    }
+    setSelectedRows([]);
+  };
+
+  const handleRowSelect = (event, id) => {
+    const selectedIndex = selectedRows.indexOf(id);
+    let newSelected = [];
+    
+    if (selectedIndex === -1) {
+      newSelected = [...selectedRows, id];
+    } else {
+      newSelected = selectedRows.filter(rowId => rowId !== id);
+    }
+    
+    setSelectedRows(newSelected);
+  };
+
+  const isRowSelected = (id) => selectedRows.indexOf(id) !== -1;
+  
+  // Gestori azioni batch
+  const handleBatchActionClick = (event) => {
+    setBatchActionAnchorEl(event.currentTarget);
+  };
+  
+  const handleBatchActionClose = () => {
+    setBatchActionAnchorEl(null);
+  };
+  
+  const handleBatchAssignPM = () => {
+    setAssignPMDialogOpen(true);
+    handleBatchActionClose();
+  };
+  
+  const handleBatchChangeStatus = () => {
+    setChangeStatusDialogOpen(true);
+    handleBatchActionClose();
+  };
+  
+  const handleOpenRouteOptimizer = () => {
+    setRouteOptimizerDialogOpen(true);
+    handleBatchActionClose();
+  };
+  
+  const handleBatchAssignPMSubmit = async (pmId) => {
+    try {
+      // Implementazione API per assegnazione batch
+      const promises = selectedRows.map(rowId => 
+        fetch('../../backend/b_tsis.php?action=assignPMToOrder', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: new URLSearchParams({
+            order_id: rowId,
+            pm_id: pmId
+          })
+        }).then(res => res.json())
+      );
+      
+      await Promise.all(promises);
+      refreshData();
+      setSelectedRows([]);
+      setAssignPMDialogOpen(false);
+    } catch (error) {
+      console.error('Error in batch assign PM:', error);
+    }
+  };
+  
+  const handleBatchChangeStatusSubmit = async (status, reason) => {
+    try {
+      // Implementazione API per cambio stato batch
+      const promises = selectedRows.map(rowId => 
+        fetch('../../backend/r_tsis_pm.php', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            action: 'updatePOSStatus',
+            pos_id: rowId,
+            status: status,
+            reason: reason
+          })
+        }).then(res => res.json())
+      );
+      
+      await Promise.all(promises);
+      refreshData();
+      setSelectedRows([]);
+      setChangeStatusDialogOpen(false);
+    } catch (error) {
+      console.error('Error in batch change status:', error);
+    }
+  };
+
+  // Gestore menù azioni
+  const handleActionClick = (event, row) => {
+    setActionMenuAnchor(event.currentTarget);
+    setSelectedRow(row);
+  };
+
+  const handleCloseActionMenu = () => {
+    setActionMenuAnchor(null);
+  };
+
+  // Gestori apertura pannelli
+  const handleOpenPanel = (type, id) => {
+    setActivePanelType(type);
+    setActivePanelId(id);
+    
+    if (type === 'tasks') {
+      setSelectedOrderId(id);
+    }
+    
+    handleCloseActionMenu();
+  };
+
+  const handleClosePanel = () => {
+    setActivePanelType(null);
+    setActivePanelId(null);
+    setSelectedOrderId(null);
+  };
+
+  // Formatta stato come badge usando i dati dinamici
+  const formatStatusBadge = (statusCode) => {
+    const statusConfig = availableStates.find(s => s.codice === statusCode) || {
+      descrizione: statusCode || 'Sconosciuto',
+      colore: 'default'
+    };
+    
+    return (
+      <Chip 
+        label={statusConfig.descrizione} 
+        color={mapStatusColor(statusConfig.colore)} 
+        size="small" 
+        variant="outlined"
+      />
+    );
+  };
+  
+  // Mappa i colori degli stati da stringhe ai valori MUI
+  const mapStatusColor = (color) => {
+    const colorMap = {
+      'blue': 'primary',
+      'green': 'success',
+      'red': 'error',
+      'orange': 'warning',
+      'cyan': 'info',
+      'gray': 'default'
+    };
+    
+    return colorMap[color] || 'default';
+  };
+
+  // Iniziali per avatar da nome completo
+  const getInitials = (fullName) => {
+    if (!fullName) return '?';
+    return fullName
+      .split(' ')
+      .map(name => name[0])
+      .join('')
+      .toUpperCase()
+      .substring(0, 2);
+  };
+
+  // Calcola le righe per mostrare nella pagina attuale
+  const paginatedData = filteredData.slice(
+    page * rowsPerPage,
+    page * rowsPerPage + rowsPerPage
+  );
+  
+  // Prepara valori disponibili per filtri a select
+  const getUniqueFilterValues = (fieldName) => {
+    if (fieldName === 'stato') {
+      return availableStates.map(state => ({
+        value: state.codice,
+        label: state.descrizione
+      }));
+    }
+    
+    if (fieldName === 'pm_full_name' && isManager) {
+      return pmList.map(pm => ({
+        value: pm.full_name,
+        label: pm.full_name
+      }));
+    }
+    
+    return null;
+  };
+
+  return (
+    <>
+      <Box sx={{ display: 'flex', mb: 2, justifyContent: 'space-between', alignItems: 'center' }}>
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+          <TextField
+            placeholder="Cerca POS..."
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            size="small"
+            InputProps={{
+              startAdornment: (
+                <InputAdornment position="start">
+                  <SearchIcon />
+                </InputAdornment>
+              ),
+            }}
+            sx={{ width: 300 }}
+          />
+          
+          {/* Toggle per mostrare solo i record selezionati */}
+          {selectedRows.length > 0 && (
+            <Button
+              variant={showOnlySelected ? "contained" : "outlined"}
+              size="small"
+              startIcon={showOnlySelected ? <CheckBoxIcon /> : <FilterListIcon />}
+              onClick={() => setShowOnlySelected(!showOnlySelected)}
+              color={showOnlySelected ? "primary" : "inherit"}
+              sx={{ ml: 1 }}
+            >
+              {showOnlySelected ? 
+                `Selezionati (${selectedRows.length})` : 
+                `Mostra selezionati (${selectedRows.length})`}
+            </Button>
+          )}
+        </Box>
+        
+        {/* Panel di azioni per righe selezionate */}
+        {selectedRows.length > 0 && (
+          <Box sx={{ display: 'flex', alignItems: 'center' }}>
+            <Card variant="outlined" sx={{ display: 'flex', alignItems: 'center' }}>
+              <CardContent sx={{ py: 0.5, px: 2, '&:last-child': { pb: 0.5 } }}>
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                  <Badge 
+                    badgeContent={selectedRows.length} 
+                    color="primary" 
+                    max={999}
+                    showZero
+                  >
+                    <CheckBoxIcon color="action" fontSize="small" />
+                  </Badge>
+                  
+                  <Button 
+                    size="small" 
+                    startIcon={<ClearIcon />} 
+                    onClick={() => setSelectedRows([])}
+                  >
+                    Deseleziona
+                  </Button>
+                  
+                  <Divider orientation="vertical" flexItem sx={{ mx: 0.5 }} />
+                  
+                  <Button
+                    size="small"
+                    variant="contained"
+                    onClick={handleBatchActionClick}
+                  >
+                    Azioni
+                  </Button>
+                </Box>
+              </CardContent>
+            </Card>
+          </Box>
+        )}
+      </Box>
+
+      <Paper sx={{ width: '100%', height: 'calc(100% - 48px)', overflow: 'hidden' }}>
+        <TableContainer sx={{ maxHeight: 'calc(100% - 52px)' }}>
+          {showOnlySelected && (
+            <Box sx={{ p: 1, bgcolor: 'action.selected', borderRadius: '4px 4px 0 0' }}>
+              <Typography variant="body2" align="center">
+                Visualizzazione filtrata: mostrati solo i {selectedRows.length} record selezionati. 
+                <Button 
+                  size="small" 
+                  color="primary" 
+                  onClick={() => setShowOnlySelected(false)}
+                  sx={{ ml: 1 }}
+                >
+                  Mostra tutti
+                </Button>
+              </Typography>
+            </Box>
+          )}
+        
+          <Table stickyHeader aria-label="pos table">
+            <TableHead>
+              <TableRow>
+                <TableCell padding="checkbox">
+                  <Checkbox
+                    color="primary"
+                    indeterminate={selectedRows.length > 0 && selectedRows.length < filteredData.length}
+                    checked={filteredData.length > 0 && selectedRows.length === filteredData.length}
+                    onChange={handleSelectAllClick}
+                    inputProps={{ 'aria-label': 'select all' }}
+                  />
+                </TableCell>
+                <TableCell>
+                  <Box sx={{ display: 'flex', alignItems: 'center' }}>
+                    <TableSortLabel
+                      active={orderBy === 'nome_account'}
+                      direction={orderBy === 'nome_account' ? order : 'asc'}
+                      onClick={() => handleRequestSort('nome_account')}
+                    >
+                      Nome POS
+                    </TableSortLabel>
+                    <ColumnFilter 
+                      column="nome_account"
+                      onFilter={handleColumnFilter}
+                      filterValue={columnFilters['nome_account']}
+                    />
+                  </Box>
+                </TableCell>
+                <TableCell>
+                  <Box sx={{ display: 'flex', alignItems: 'center' }}>
+                    <TableSortLabel
+                      active={orderBy === 'tipo_attivita_desc'}
+                      direction={orderBy === 'tipo_attivita_desc' ? order : 'asc'}
+                      onClick={() => handleRequestSort('tipo_attivita_desc')}
+                    >
+                      Tipo Attività
+                    </TableSortLabel>
+                    <ColumnFilter 
+                      column="tipo_attivita_desc"
+                      onFilter={handleColumnFilter}
+                      filterValue={columnFilters['tipo_attivita_desc']}
+                    />
+                  </Box>
+                </TableCell>
+                <TableCell>
+                  <Box sx={{ display: 'flex', alignItems: 'center' }}>
+                    <TableSortLabel
+                      active={orderBy === 'stato'}
+                      direction={orderBy === 'stato' ? order : 'asc'}
+                      onClick={() => handleRequestSort('stato')}
+                    >
+                      Stato
+                    </TableSortLabel>
+                    <ColumnFilter 
+                      column="stato"
+                      onFilter={handleColumnFilter}
+                      filterValue={columnFilters['stato']}
+                      availableValues={getUniqueFilterValues('stato')}
+                    />
+                  </Box>
+                </TableCell>
+                <TableCell>
+                  <Box sx={{ display: 'flex', alignItems: 'center' }}>
+                    <TableSortLabel
+                      active={orderBy === 'sf_territory'}
+                      direction={orderBy === 'sf_territory' ? order : 'asc'}
+                      onClick={() => handleRequestSort('sf_territory')}
+                    >
+                      Territorio
+                    </TableSortLabel>
+                    <ColumnFilter 
+                      column="sf_territory"
+                      onFilter={handleColumnFilter}
+                      filterValue={columnFilters['sf_territory']}
+                    />
+                  </Box>
+                </TableCell>
+                <TableCell>
+                  <Box sx={{ display: 'flex', alignItems: 'center' }}>
+                    <TableSortLabel
+                      active={orderBy === 'rrp_segment'}
+                      direction={orderBy === 'rrp_segment' ? order : 'asc'}
+                      onClick={() => handleRequestSort('rrp_segment')}
+                    >
+                      Segmento
+                    </TableSortLabel>
+                    <ColumnFilter 
+                      column="rrp_segment"
+                      onFilter={handleColumnFilter}
+                      filterValue={columnFilters['rrp_segment']}
+                    />
+                  </Box>
+                </TableCell>
+                
+                {/* Colonna PM Assegnato solo per i manager */}
+                {isManager && (
+                  <TableCell>
+                    <Box sx={{ display: 'flex', alignItems: 'center' }}>
+                      <TableSortLabel
+                        active={orderBy === 'pm_full_name'}
+                        direction={orderBy === 'pm_full_name' ? order : 'asc'}
+                        onClick={() => handleRequestSort('pm_full_name')}
+                      >
+                        PM Assegnato
+                      </TableSortLabel>
+                      <ColumnFilter 
+                        column="pm_full_name"
+                        onFilter={handleColumnFilter}
+                        filterValue={columnFilters['pm_full_name']}
+                        availableValues={getUniqueFilterValues('pm_full_name')}
+                      />
+                    </Box>
+                  </TableCell>
+                )}
+                
+                <TableCell align="center">Azioni</TableCell>
+              </TableRow>
+            </TableHead>
+            <TableBody>
+              {paginatedData.length > 0 ? (
+                paginatedData.map((row) => (
+                  <TableRow 
+                    key={row.id} 
+                    hover
+                    selected={isRowSelected(row.id)}
+                  >
+                    <TableCell padding="checkbox">
+                      <Checkbox
+                        color="primary"
+                        checked={isRowSelected(row.id)}
+                        onChange={(event) => handleRowSelect(event, row.id)}
+                        inputProps={{ 'aria-labelledby': `enhanced-table-checkbox-${row.id}` }}
+                      />
+                    </TableCell>
+                    <TableCell>{row.nome_account}</TableCell>
+                    <TableCell>{row.tipo_attivita_desc}</TableCell>
+                    <TableCell>{formatStatusBadge(row.stato)}</TableCell>
+                    <TableCell>{row.sf_territory}</TableCell>
+                    <TableCell>{row.rrp_segment}</TableCell>
+                    
+                    {/* PM Assegnato (solo per i manager) */}
+                    {isManager && (
+                      <TableCell>
+                        {row.pm_full_name ? (
+                          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                            <Avatar 
+                              sx={{ 
+                                width: 24, 
+                                height: 24, 
+                                fontSize: '0.75rem', 
+                                bgcolor: 'primary.main' 
+                              }}
+                            >
+                              {getInitials(row.pm_full_name)}
+                            </Avatar>
+                            {row.pm_full_name}
+                          </Box>
+                        ) : (
+                          <Chip 
+                            label="Non assegnato" 
+                            size="small" 
+                            variant="outlined" 
+                            color="default"
+                          />
+                        )}
+                      </TableCell>
+                    )}
+                    
+                    <TableCell align="center">
+                      <IconButton size="small" onClick={(e) => handleActionClick(e, row)}>
+                        <MoreVertIcon />
+                      </IconButton>
+                    </TableCell>
+                  </TableRow>
+                ))
+              ) : (
+                <TableRow>
+                 <TableCell colSpan={isManager ? 8 : 7} align="center">
+                   Nessun dato disponibile
+                 </TableCell>
+               </TableRow>
+             )}
+           </TableBody>
+         </Table>
+       </TableContainer>
+       <TablePagination
+         rowsPerPageOptions={[10, 25, 50, 100]}
+         component="div"
+         count={filteredData.length}
+         rowsPerPage={rowsPerPage}
+         page={page}
+         onPageChange={handleChangePage}
+         onRowsPerPageChange={handleChangeRowsPerPage}
+         labelRowsPerPage="Righe per pagina:"
+         labelDisplayedRows={({ from, to, count }) => `${from}-${to} di ${count}`}
+       />
+     </Paper>
+
+     {/* Menu Azioni per singola riga */}
+     <Menu
+       anchorEl={actionMenuAnchor}
+       open={Boolean(actionMenuAnchor)}
+       onClose={handleCloseActionMenu}
+     >
+       <MenuItem onClick={() => handleOpenPanel('tasks', selectedRow?.id)}>
+         <TasksIcon fontSize="small" sx={{ mr: 1 }} />
+         Attività
+       </MenuItem>
+       
+       {/* Mostra "Cambia Stato" solo se l'utente è un PM o se è manager e il POS ha un PM assegnato */}
+       {(!isManager || (isManager && selectedRow?.pm_id)) && (
+         <MenuItem onClick={() => handleOpenPanel('status', selectedRow?.id)}>
+           <EditIcon fontSize="small" sx={{ mr: 1 }} />
+           Cambia Stato
+         </MenuItem>
+       )}
+       
+       <MenuItem onClick={() => handleOpenPanel('documents', selectedRow?.id)}>
+         <FolderIcon fontSize="small" sx={{ mr: 1 }} />
+         Documenti
+       </MenuItem>
+       
+       {/* Opzione "Assegna PM" solo per i manager */}
+       {isManager && (
+         <MenuItem onClick={() => handleOpenPanel('assign', selectedRow?.id)}>
+           <ManagerIcon fontSize="small" sx={{ mr: 1 }} />
+           Assegna PM
+         </MenuItem>
+       )}
+     </Menu>
+     
+     {/* Menu Azioni Batch */}
+     <Menu
+       anchorEl={batchActionAnchorEl}
+       open={Boolean(batchActionAnchorEl)}
+       onClose={handleBatchActionClose}
+     >
+       {isManager && (
+         <MenuItem onClick={handleBatchAssignPM}>
+           <PeopleIcon fontSize="small" sx={{ mr: 1 }} />
+           Assegna PM
+         </MenuItem>
+       )}
+       <MenuItem onClick={handleBatchChangeStatus}>
+         <EditIcon fontSize="small" sx={{ mr: 1 }} />
+         Cambia Stato
+       </MenuItem>
+       
+       {/* Nuova opzione per ottimizzazione percorsi */}
+       <MenuItem onClick={handleOpenRouteOptimizer}>
+         <RouteIcon fontSize="small" sx={{ mr: 1 }} />
+         Ottimizza percorso visite
+       </MenuItem>
+     </Menu>
+
+     {/* Dialog per azioni batch */}
+     <BatchAssignPMDialog 
+       open={assignPMDialogOpen}
+       onClose={() => setAssignPMDialogOpen(false)}
+       onAssign={handleBatchAssignPMSubmit}
+       selectedRows={selectedRows}
+       pmList={pmList}
+     />
+     
+     <BatchChangeStatusDialog 
+       open={changeStatusDialogOpen}
+       onClose={() => setChangeStatusDialogOpen(false)}
+       onChangeStatus={handleBatchChangeStatusSubmit}
+       selectedRows={selectedRows}
+       statiList={availableStates}
+     />
+     
+     {/* Dialog di ottimizzazione percorsi */}
+     <RouteOptimizerDialog 
+       open={routeOptimizerDialogOpen}
+       onClose={() => setRouteOptimizerDialogOpen(false)}
+       selectedRows={selectedRows}
+       selectedPosData={filteredData.filter(row => selectedRows.includes(row.id))}
+     />
+
+     {/* Panel di dettaglio dell'ordine */}
+     {selectedOrderId && (
+       <OrderDetailPanel
+         posOrderId={selectedOrderId}
+         onClose={handleClosePanel}
+         onUpdate={refreshData}
+         isManager={isManager}
+       />
+     )}
+
+     {/* Altri pannelli */}
+     {activePanelType === 'status' && (
+       <StatusPanel 
+         posId={activePanelId} 
+         onClose={handleClosePanel}
+         onUpdate={refreshData}
+         availableStates={availableStates.filter(s => s.tipo === 'ordine')}
+       />
+     )}
+
+     {activePanelType === 'documents' && (
+       <DocumentsPanel 
+         posId={activePanelId} 
+         onClose={handleClosePanel}
+       />
+     )}
+
+     {/* Pannello per l'assegnazione del PM */}
+     {activePanelType === 'assign' && isManager && (
+       <AssignPMPanel 
+         posId={activePanelId} 
+         onClose={handleClosePanel}
+         onUpdate={refreshData}
+         pmList={pmList}
+       />
+     )}
+   </>
+ );
+};
+
+export default POSTable;
+
+
+# ====== File: /var/www/html/insightg/wup/r_wup/src/components/modules/DashboardPM/components/RouteOptimizerDialog.jsx ======
+// In RouteOptimizerDialog.jsx
+import React, { useState } from 'react';
+import {
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogActions,
+  Button,
+  Typography,
+  List,
+  ListItem,
+  ListItemText,
+  Divider,
+  FormControl,
+  InputLabel,
+  Select,
+  MenuItem,
+  Box,
+  Alert,
+  Snackbar
+} from '@mui/material';
+import { Route as RouteIcon } from '@mui/icons-material';
+
+const RouteOptimizerDialog = ({ open, onClose, selectedRows, selectedPosData }) => {
+  const [optimizationType, setOptimizationType] = useState('new');
+  const [snackbarOpen, setSnackbarOpen] = useState(false);
+  
+  // Funzione per avviare l'ottimizzazione
+  const handleStartOptimization = () => {
+    try {
+      console.log('Avvio ottimizzazione con dati:', selectedPosData);
+      
+      // Memorizza i POS selezionati in sessionStorage
+      sessionStorage.setItem('selected_pos_for_optimization', JSON.stringify(selectedPosData));
+      
+      // Chiude il dialog
+      onClose();
+      
+      // Mostra un feedback
+      setSnackbarOpen(true);
+      
+      // Usa il metodo esistente nell'applicazione per cambiare modulo
+      // Crea un evento personalizzato che AppContainer può ascoltare
+      setTimeout(() => {
+        // Avvia il cambio modulo solo dopo aver chiuso il dialog
+        document.dispatchEvent(new CustomEvent('changeModule', { 
+          detail: { moduleName: 'route-optimizer' } 
+        }));
+      }, 100);
+    } catch (error) {
+      console.error('Errore durante l\'avvio dell\'ottimizzazione:', error);
+    }
+  };
+
+  const handleCloseSnackbar = () => {
+    setSnackbarOpen(false);
+  };
+
+  return (
+    <>
+      <Dialog open={open} onClose={onClose} maxWidth="md" fullWidth>
+        <DialogTitle>
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+            <RouteIcon color="primary" />
+            <Typography variant="h6">Ottimizzazione Percorsi Visite</Typography>
+          </Box>
+        </DialogTitle>
+        <DialogContent>
+          <Alert severity="info" sx={{ mb: 2 }}>
+            Stai per ottimizzare un percorso per visitare {selectedRows.length} punti vendita.
+          </Alert>
+          
+          <Typography variant="subtitle1" gutterBottom>
+            Punti vendita selezionati:
+          </Typography>
+          
+          <List sx={{ maxHeight: 200, overflow: 'auto', mb: 2 }}>
+            {selectedPosData.map((pos) => (
+              <React.Fragment key={pos.id}>
+                <ListItem>
+                  <ListItemText
+                    primary={pos.nome_account}
+                    secondary={`${pos.indirizzo_spedizioni || ''}, ${pos.citt_spedizioni || ''}`}
+                  />
+                </ListItem>
+                <Divider />
+              </React.Fragment>
+            ))}
+          </List>
+          
+          <FormControl fullWidth sx={{ mt: 2 }}>
+            <InputLabel>Tipo di ottimizzazione</InputLabel>
+            <Select
+              value={optimizationType}
+              onChange={(e) => setOptimizationType(e.target.value)}
+              label="Tipo di ottimizzazione"
+            >
+              <MenuItem value="new">Crea nuovo percorso</MenuItem>
+              <MenuItem value="add">Aggiungi a percorso esistente</MenuItem>
+            </Select>
+          </FormControl>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={onClose}>Annulla</Button>
+          <Button 
+            variant="contained" 
+            color="primary"
+            startIcon={<RouteIcon />}
+            onClick={handleStartOptimization}
+          >
+            Inizia Ottimizzazione
+          </Button>
+        </DialogActions>
+      </Dialog>
+      
+      <Snackbar
+        open={snackbarOpen}
+        autoHideDuration={6000}
+        onClose={handleCloseSnackbar}
+        message="Caricamento modulo di ottimizzazione percorsi..."
+      />
+    </>
+  );
+};
+
+export default RouteOptimizerDialog;
+
+
+# ====== File: /var/www/html/insightg/wup/r_wup/src/components/modules/DashboardPM/components/DocumentsPanel.jsx ======
+import React, { useState, useEffect } from 'react';
+import {
+  Box,
+  Typography,
+  Button,
+  Drawer,
+  IconButton,
+  CircularProgress,
+  List,
+  ListItem,
+  ListItemIcon,
+  ListItemText,
+  Divider
+} from '@mui/material';
+import {
+  Close as CloseIcon,
+  InsertDriveFile as FileIcon,
+  UploadFile as UploadIcon,
+  Download as DownloadIcon,
+  PictureAsPdf as PdfIcon,
+  Image as ImageIcon,
+  Description as DocIcon
+} from '@mui/icons-material';
+import { fetchDocuments } from '../api/pmApi';
+
+const DocumentsPanel = ({ posId, onClose }) => {
+  const [documents, setDocuments] = useState([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState(null);
+
+  // Carica i documenti al montaggio del componente
+  useEffect(() => {
+    const loadDocuments = async () => {
+      try {
+        setIsLoading(true);
+        setError(null);
+        
+        const response = await fetchDocuments(posId);
+        
+        if (response.success) {
+          setDocuments(response.data || []);
+        } else {
+          setError(response.error || 'Errore nel caricamento dei documenti');
+        }
+      } catch (error) {
+        console.error('Error loading documents:', error);
+        setError('Errore nella comunicazione con il server');
+      } finally {
+        setIsLoading(false);
+      }
+    };
+    
+    loadDocuments();
+  }, [posId]);
+
+  // Funzione per determinare l'icona in base al tipo di file
+  const getFileIcon = (filename) => {
+    const extension = filename.split('.').pop().toLowerCase();
+    
+    switch (extension) {
+      case 'pdf':
+        return <PdfIcon color="error" />;
+      case 'jpg':
+      case 'jpeg':
+      case 'png':
+      case 'gif':
+        return <ImageIcon color="primary" />;
+      case 'doc':
+      case 'docx':
+        return <DocIcon color="primary" />;
+      default:
+        return <FileIcon />;
+    }
+  };
+
+  return (
+    <Drawer
+      anchor="right"
+      open={true}
+      onClose={onClose}
+      PaperProps={{
+        sx: { width: { xs: '100%', sm: 400 } }
+      }}
+    >
+      <Box sx={{ p: 2, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <Typography variant="h6">Documenti</Typography>
+        <IconButton onClick={onClose}>
+          <CloseIcon />
+        </IconButton>
+      </Box>
+      
+      <Divider />
+      
+      <Box sx={{ p: 2 }}>
+        <Button
+          variant="contained"
+          startIcon={<UploadIcon />}
+          sx={{ mb: 2 }}
+        >
+          Carica Documento
+        </Button>
+        
+        {isLoading ? (
+          <Box sx={{ display: 'flex', justifyContent: 'center', p: 4 }}>
+            <CircularProgress />
+          </Box>
+        ) : error ? (
+          <Typography color="error" sx={{ p: 2 }}>
+            {error}
+          </Typography>
+        ) : documents.length === 0 ? (
+          <Typography sx={{ p: 2, textAlign: 'center' }}>
+            Nessun documento disponibile
+          </Typography>
+        ) : (
+          <List>
+            {documents.map((doc) => (
+              <ListItem
+                key={doc.id}
+                secondaryAction={
+                  <IconButton edge="end" aria-label="download">
+                    <DownloadIcon />
+                  </IconButton>
+                }
+              >
+                <ListItemIcon>
+                  {getFileIcon(doc.filename)}
+                </ListItemIcon>
+                <ListItemText
+                  primary={doc.filename}
+                  secondary={
+                    <>
+                      <Typography component="span" variant="body2" color="text.primary">
+                        {doc.description || 'Nessuna descrizione'}
+                      </Typography>
+                      <Typography variant="caption" display="block">
+                        {new Date(doc.upload_date).toLocaleDateString()}
+                      </Typography>
+                    </>
+                  }
+                />
+              </ListItem>
+            ))}
+          </List>
+        )}
+      </Box>
+    </Drawer>
+  );
+};
+
+export default DocumentsPanel;
+
+
+
+
+# ====== File: /var/www/html/insightg/wup/r_wup/src/components/modules/DashboardPM/components/AssignPMPanel.jsx ======
+import React, { useState, useEffect } from 'react';
+import {
+  Box,
+  Typography,
+  Button,
+  Drawer,
+  IconButton,
+  CircularProgress,
+  FormControl,
+  InputLabel,
+  Select,
+  MenuItem,
+  Divider,
+  Avatar,
+  Paper,
+  Alert,
+  TextField
+} from '@mui/material';
+import {
+  Close as CloseIcon,
+  Save as SaveIcon,
+  Person as PersonIcon
+} from '@mui/icons-material';
+
+const AssignPMPanel = ({ posId, onClose, onUpdate, pmList = [] }) => {
+  const [selectedPM, setSelectedPM] = useState('');
+  const [note, setNote] = useState('');
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState(null);
+  const [success, setSuccess] = useState(false);
+  
+  // Se pmList non è fornito, carica la lista dei PM
+  useEffect(() => {
+    const fetchPMList = async () => {
+      if (pmList.length === 0) {
+        try {
+          setIsLoading(true);
+          const response = await fetch('../../backend/b_tsis.php?action=getAvailablePMs');
+          const result = await response.json();
+          
+          if (result.success) {
+            setPMList(result.data);
+          }
+        } catch (error) {
+          console.error('Error fetching PM list:', error);
+          setError('Errore nel caricamento della lista PM');
+        } finally {
+          setIsLoading(false);
+        }
+      }
+    };
+    
+    fetchPMList();
+  }, [pmList]);
+
+  // Gestisce l'assegnazione del PM
+  const handleAssign = async () => {
+    if (!selectedPM) {
+      setError('Seleziona un PM');
+      return;
+    }
+    
+    try {
+      setIsLoading(true);
+      setError(null);
+      
+      const response = await fetch('../../backend/b_tsis.php?action=assignPMToOrder', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({
+          order_id: posId,
+          pm_id: selectedPM,
+          note: note
+        })
+      });
+      
+      const result = await response.json();
+      
+      if (result.success) {
+        setSuccess(true);
+        
+        // Delay before closing to show success message
+        setTimeout(() => {
+          onUpdate();
+          onClose();
+        }, 1500);
+      } else {
+        setError(result.error || 'Errore nell\'assegnazione del PM');
+      }
+    } catch (error) {
+      console.error('Error assigning PM:', error);
+      setError('Errore nella comunicazione con il server');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  return (
+    <Drawer
+      anchor="right"
+      open={true}
+      onClose={onClose}
+      PaperProps={{
+        sx: { width: { xs: '100%', sm: 400 } }
+      }}
+    >
+      <Box sx={{ p: 2, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <Typography variant="h6">Assegna Project Manager</Typography>
+        <IconButton onClick={onClose}>
+          <CloseIcon />
+        </IconButton>
+      </Box>
+      
+      <Divider />
+      
+      <Box sx={{ p: 2 }}>
+        {isLoading && !success ? (
+          <Box sx={{ display: 'flex', justifyContent: 'center', p: 4 }}>
+            <CircularProgress />
+          </Box>
+        ) : success ? (
+          <Alert severity="success" sx={{ mb: 2 }}>
+            PM assegnato con successo
+          </Alert>
+        ) : (
+          <>
+            {error && (
+              <Alert severity="error" sx={{ mb: 2 }}>
+                {error}
+              </Alert>
+            )}
+            
+            <Paper variant="outlined" sx={{ p: 2, mb: 3 }}>
+              <Typography variant="subtitle2" gutterBottom>
+                Seleziona Project Manager
+              </Typography>
+              <FormControl fullWidth sx={{ mt: 1 }}>
+                <InputLabel>Project Manager</InputLabel>
+                <Select
+                  value={selectedPM}
+                  onChange={(e) => setSelectedPM(e.target.value)}
+                  label="Project Manager"
+                >
+                  <MenuItem value="">
+                    <em>Seleziona PM</em>
+                  </MenuItem>
+                  
+                  {pmList.map((pm) => (
+                    <MenuItem key={pm.id} value={pm.id}>
+                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                        <Avatar sx={{ width: 24, height: 24, fontSize: '0.75rem' }}>
+                          {pm.full_name ? pm.full_name.charAt(0).toUpperCase() : 'U'}
+                        </Avatar>
+                        <Box>
+                          <Typography variant="body2">
+                            {pm.full_name || pm.username}
+                          </Typography>
+                          <Typography variant="caption" color="text.secondary">
+                            {pm.current_assignments}/{pm.max_pos_assegnabili} ordini
+                          </Typography>
+                        </Box>
+                      </Box>
+                    </MenuItem>
+                  ))}
+                </Select>
+              </FormControl>
+            </Paper>
+            
+            <TextField
+              label="Note (opzionale)"
+              multiline
+              rows={3}
+              value={note}
+              onChange={(e) => setNote(e.target.value)}
+              fullWidth
+              margin="normal"
+            />
+            
+            <Box sx={{ mt: 3, display: 'flex', justifyContent: 'flex-end' }}>
+              <Button 
+                variant="contained"
+                startIcon={<SaveIcon />}
+                onClick={handleAssign}
+                disabled={isLoading || !selectedPM}
+              >
+                {isLoading ? <CircularProgress size={24} /> : 'Assegna PM'}
+              </Button>
+            </Box>
+          </>
+        )}
+      </Box>
+    </Drawer>
+  );
+};
+
+export default AssignPMPanel;
+
+
+# ====== File: /var/www/html/insightg/wup/r_wup/src/components/modules/DashboardPM/components/StatsPanel.jsx ======
+import React, { useState, useEffect } from 'react';
+import { 
+  Grid, 
+  Paper, 
+  Box, 
+  Typography, 
+  Chip,
+  Tooltip,
+  CircularProgress
+} from '@mui/material';
+import {
+  Assignment as AssignmentIcon,
+  Pending as PendingIcon,
+  DoNotDisturb as BlockedIcon,
+  CheckCircle as CompletedIcon,
+  PlayArrow as InProgressIcon,
+  DoNotTouch as StandbyIcon,
+  Insights as InsightsIcon
+} from '@mui/icons-material';
+
+const StatsPanel = ({ stats, isManager = false }) => {
+  const [availableStates, setAvailableStates] = useState([]);
+  const [isLoading, setIsLoading] = useState(false);
+  
+  // Carica stati disponibili all'avvio
+  useEffect(() => {
+    const fetchStatiAvanzamento = async () => {
+      setIsLoading(true);
+      try {
+        const response = await fetch('../../backend/b_tsis.php?action=getStatiAvanzamento');
+        const result = await response.json();
+        
+        if (result.success) {
+          // Filtra solo gli stati per gli ordini
+          const orderStates = result.data.filter(stato => 
+            stato.tipo === 'ordine' && stato.attivo
+          );
+          setAvailableStates(orderStates);
+        }
+      } catch (error) {
+        console.error('Error fetching stati avanzamento:', error);
+      } finally {
+        setIsLoading(false);
+      }
+    };
+    
+    fetchStatiAvanzamento();
+  }, []);
+  
+  // Ottiene l'icona per lo stato
+  const getStateIcon = (statusCode) => {
+    const stateConfig = availableStates.find(s => s.codice === statusCode);
+    
+    if (!stateConfig) {
+      return <AssignmentIcon />;
+    }
+    
+    const iconMapping = {
+      'assignment': <AssignmentIcon />,
+      'pending': <PendingIcon />,
+      'check_circle': <CompletedIcon />,
+      'play_arrow': <InProgressIcon />,
+      'do_not_touch': <StandbyIcon />,
+      'block': <BlockedIcon />
+    };
+    
+    return iconMapping[stateConfig.icona] || <AssignmentIcon />;
+  };
+  
+  // Ottiene il colore per lo stato
+  const getStateColor = (statusCode) => {
+    const stateConfig = availableStates.find(s => s.codice === statusCode);
+    
+    if (!stateConfig) {
+      return 'primary';
+    }
+    
+    const colorMap = {
+      'blue': 'primary',
+      'green': 'success',
+      'red': 'error',
+      'orange': 'warning',
+      'cyan': 'info',
+      'gray': 'default'
+    };
+    
+    return colorMap[stateConfig.colore] || 'primary';
+  };
+
+  // Calcola le percentuali
+  const totalOrders = stats?.total || 0;
+  const completionRate = totalOrders > 0 
+    ? ((stats?.completati || 0) / totalOrders * 100).toFixed(1) 
+    : 0;
+  const problematicRate = totalOrders > 0 
+    ? (((stats?.standby || 0) + (stats?.non_lavorabili || 0)) / totalOrders * 100).toFixed(1) 
+    : 0;
+
+  // Mappa stati per statistiche
+  const getStatCards = () => {
+    if (!stats || isLoading || availableStates.length === 0) {
+      return (
+        <Grid item xs={12}>
+          <Box sx={{ display: 'flex', justifyContent: 'center', p: 2 }}>
+            <CircularProgress size={24} />
+          </Box>
+        </Grid>
+      );
+    }
+    
+    // Prepara i dati per le card
+    const statCards = [
+      {
+        title: 'Totali',
+        value: stats.total || 0,
+        icon: <AssignmentIcon color="primary" />,
+        color: 'primary'
+      }
+    ];
+    
+    // Aggiungi card per ogni stato presente nei dati
+    availableStates.forEach(state => {
+      const stateCode = state.codice;
+      const stateValue = stats[stateCode] || 0;
+      
+      if (stateCode !== 'totale') {
+        statCards.push({
+          title: state.descrizione,
+          value: stateValue,
+          icon: getStateIcon(stateCode),
+          color: getStateColor(stateCode)
+        });
+      }
+    });
+    
+    return statCards.map((card, index) => (
+      <Grid item xs={4} sm={2} md={1} key={index}>
+        <Paper elevation={1} sx={{ p: 1, height: '100%' }}>
+          <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+            {React.cloneElement(card.icon, { 
+              color: card.color, 
+              sx: { fontSize: 20, mb: 0.5 } 
+            })}
+            <Typography variant="h6" fontSize={18} align="center">{card.value}</Typography>
+            <Typography variant="caption" color="text.secondary" align="center">
+              {card.title}
+            </Typography>
+          </Box>
+        </Paper>
+      </Grid>
+    ));
+  };
+
+  return (
+    <Box sx={{ mb: 1 }}>
+      {/* Header stats in versione compatta */}
+      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1 }}>
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+          <Typography variant="subtitle1" fontWeight="medium">Panoramica</Typography>
+          
+          {/* Badge che mostra se le statistiche sono globali */}
+          {isManager && (
+            <Tooltip title="Dati aggregati di tutti i PM">
+              <Chip 
+                icon={<InsightsIcon fontSize="small" />} 
+                label="Statistiche Globali" 
+                color="info" 
+                size="small"
+                variant="outlined"
+              />
+            </Tooltip>
+          )}
+        </Box>
+        
+        <Box sx={{ display: 'flex', gap: 1 }}>
+          <Chip 
+            icon={<CompletedIcon fontSize="small" />} 
+            label={`${completionRate}% completati`}
+            color="success"
+            size="small"
+            variant="outlined"
+          />
+          
+          <Chip 
+            icon={<BlockedIcon fontSize="small" />} 
+            label={`${problematicRate}% problematici`}
+            color="warning"
+            size="small"
+            variant="outlined"
+          />
+        </Box>
+      </Box>
+      
+      {/* Stats cards in versione più compatta */}
+      <Grid container spacing={1}>
+        {getStatCards()}
+      </Grid>
+    </Box>
+  );
+};
+
+export default StatsPanel;
+
+
+# ====== File: /var/www/html/insightg/wup/r_wup/src/components/modules/DashboardPM/components/POSTree.jsx ======
+import React, { useState, useEffect } from 'react';
+import { 
+  Box, 
+  Paper, 
+  List, 
+  ListItem, 
+  ListItemText, 
+  ListItemIcon, 
+  Collapse, 
+  TextField, 
+  InputAdornment,
+  IconButton,
+  Typography,
+  Menu,
+  MenuItem,
+  Chip,
+  CircularProgress,
+  Avatar,
+  Tooltip,
+  Badge
+} from '@mui/material';
+import {
+  ExpandMore as ExpandMoreIcon,
+  ChevronRight as ChevronRightIcon,
+  Search as SearchIcon,
+  MoreVert as MoreVertIcon,
+  Store as StoreIcon,
+  Assignment as TasksIcon,
+  Info as InfoIcon,
+  Edit as EditIcon,
+  Folder as FolderIcon,
+  SupervisorAccount as ManagerIcon,
+  Person as PersonIcon
+} from '@mui/icons-material';
+import { usePMStore } from '../stores/pmStore';
+import TasksPanel from './TasksPanel';
+import StatusPanel from './StatusPanel';
+import DocumentsPanel from './DocumentsPanel';
+import OrderDetailPanel from './OrderDetailPanel';
+
+// Funzione di ordinamento stringa con supporto per valori nulli
+const safeCompare = (a, b) => {
+  if (a === null || a === undefined) return b === null || b === undefined ? 0 : 1;
+  if (b === null || b === undefined) return -1;
+  return a.toString().localeCompare(b.toString());
+};
+
+// Formatter per le date in formato italiano
+const formatDate = (dateString) => {
+  if (!dateString) return '';
+  
+  const date = new Date(dateString);
+  if (isNaN(date.getTime())) return '';
+  
+  // Formato italiano: DD/MM/YYYY
+  return date.toLocaleDateString('it-IT', {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric'
+  });
+};
+
+// Funzione helper per verificare se un elemento ha ordini attivi (non completati)
+const hasActiveOrders = (item) => {
+  // Per i POS, controlla direttamente i suoi ordini
+  if (item.children && Array.isArray(item.children)) {
+    return item.children.some(order => order.stato !== 'completato');
+  }
+  return false;
+};
+
+// Iniziali per avatar da nome completo
+const getInitials = (fullName) => {
+  if (!fullName) return '?';
+  return fullName
+    .split(' ')
+    .map(name => name[0])
+    .join('')
+    .toUpperCase()
+    .substring(0, 2);
+};
+
+const POSTree = ({ data, isManager = false }) => {
+  const [searchTerm, setSearchTerm] = useState('');
+  const [expandedNodes, setExpandedNodes] = useState({});
+  const [filteredData, setFilteredData] = useState([]);
+  const [isLoading, setIsLoading] = useState(false);
+  
+  // Stato per i menu azioni
+  const [actionMenuAnchor, setActionMenuAnchor] = useState(null);
+  const [selectedRow, setSelectedRow] = useState(null);
+  
+  // Stato per i pannelli
+  const [activePanelType, setActivePanelType] = useState(null);
+  const [activePanelId, setActivePanelId] = useState(null);
+  
+  // Stato specifico per il pannello OrderDetail
+  const [selectedOrderId, setSelectedOrderId] = useState(null);
+  
+  const { refreshData } = usePMStore();
+  const [availableStates, setAvailableStates] = useState([]);
+
+
+// Aggiungere questo useEffect all'inizio:
+useEffect(() => {
+  const fetchStatiAvanzamento = async () => {
+    try {
+      const response = await fetch('../../backend/b_tsis.php?action=getStatiAvanzamento');
+      const result = await response.json();
+      
+      if (result.success) {
+        // Filtra solo gli stati per gli ordini
+        const orderStates = result.data.filter(stato => 
+          stato.tipo === 'ordine' && stato.attivo
+        );
+        setAvailableStates(orderStates);
+      }
+    } catch (error) {
+      console.error('Error fetching stati avanzamento:', error);
+    }
+  };
+  
+  fetchStatiAvanzamento();
+}, []);
+
+
+  // Organizza i dati per la visualizzazione ad albero
+  useEffect(() => {
+    setIsLoading(true);
+    
+    try {
+      // Filtra i dati in base alla ricerca
+      let filteredItems = [...data];
+      if (searchTerm) {
+        const search = searchTerm.toLowerCase();
+        filteredItems = data.filter(item => 
+          (item.nome_account && item.nome_account.toLowerCase().includes(search)) ||
+          (item.sf_region && item.sf_region.toLowerCase().includes(search)) ||
+          (item.sf_district && item.sf_district.toLowerCase().includes(search)) ||
+          (item.sf_territory && item.sf_territory.toLowerCase().includes(search)) ||
+          (item.rrp_segment && item.rrp_segment.toLowerCase().includes(search)) ||
+          (item.tipo_attivita_desc && item.tipo_attivita_desc.toLowerCase().includes(search)) ||
+          (isManager && item.pm_full_name && item.pm_full_name.toLowerCase().includes(search))
+        );
+      }
+      
+      // Crea la struttura dell'albero raggruppando per regione e territorio
+      const posMap = {};
+      
+      filteredItems.forEach(item => {
+        // Utilizziamo campi strutturati come nel backend
+        const region = item.sf_region || 'Senza Regione';
+        const district = item.sf_district || 'Senza Distretto';
+        const territory = item.sf_territory || 'Senza Territorio';
+        
+        // Creazione chiave univoca per il POS
+        const posKey = item.nome_account || `pos_${item.id}`;
+        
+        // Verifica se esiste già la regione
+        if (!posMap[region]) {
+          posMap[region] = {
+            id: `region_${region}`,
+            name: region,
+            children: {}
+          };
+        }
+        
+        // Verifica se esiste già il territorio nella regione
+        if (!posMap[region].children[territory]) {
+          posMap[region].children[territory] = {
+            id: `territory_${region}_${territory}`,
+            name: territory,
+            children: {}
+          };
+        }
+        
+        // Aggiungi il POS al territorio
+        if (!posMap[region].children[territory].children[posKey]) {
+          posMap[region].children[territory].children[posKey] = {
+            ...item,
+            id: item.id,
+            title: item.nome_account,
+            children: []
+          };
+        }
+
+        // Se l'elemento corrente rappresenta un ordine, aggiungiamolo al POS
+        if (item.id) {
+          // Trattiamo ogni elemento come un potenziale ordine
+          const orderItem = {
+            id: item.id,
+            title: `#${item.id} - ${item.tipo_attivita_desc || 'Ordine'}`,
+            stato: item.stato || 'nuovo',
+            data_creazione: item.data_creazione,
+            progress: item.progress || 0,
+            tipo_attivita_id: item.tipo_attivita_id,
+            tipo_attivita_desc: item.tipo_attivita_desc || 'Tipologia non specificata',
+            tipo_attivita_codice: item.tipo_attivita_codice,
+            pm_id: item.pm_id,
+            pm_username: item.pm_username,
+            pm_full_name: item.pm_full_name
+          };
+          
+          // Aggiungiamo l'ordine alla collezione del POS
+          posMap[region].children[territory].children[posKey].children.push(orderItem);
+        }
+      });
+      
+      // Conversione della mappa in array per il rendering
+      let treeData = Object.values(posMap)
+        .map(region => ({
+          ...region,
+          children: Object.values(region.children)
+            .map(territory => ({
+              ...territory,
+              children: Object.values(territory.children)
+                .map(pos => ({
+                  ...pos,
+                  // Filtra ordini duplicati basandosi sull'ID
+                  children: pos.children.filter((order, index, self) => 
+                    index === self.findIndex(o => o.id === order.id)
+                  )
+                }))
+                .sort((a, b) => safeCompare(a.title, b.title))
+            }))
+            .sort((a, b) => safeCompare(a.name, b.name))
+        }))
+        .sort((a, b) => safeCompare(a.name, b.name));
+      
+      // Aggiunge lo stato attivo ai nodi che hanno ordini non completati
+      treeData = treeData.map(region => {
+        // Controlla se la regione ha territori con POS attivi
+        const hasActiveTerritory = region.children.some(territory => 
+          territory.children.some(pos => hasActiveOrders(pos))
+        );
+        
+        // Aggiorna i territori
+        const updatedTerritories = region.children.map(territory => {
+          // Controlla se il territorio ha POS attivi
+          const hasActivePOS = territory.children.some(pos => hasActiveOrders(pos));
+          
+          return {
+            ...territory,
+            hasActiveOrders: hasActivePOS,
+            children: territory.children // mantieni i figli invariati
+          };
+        });
+        
+        return {
+          ...region,
+          hasActiveOrders: hasActiveTerritory,
+          children: updatedTerritories
+        };
+      });
+
+      setFilteredData(treeData);
+    } catch (error) {
+      console.error('Error organizing tree data:', error);
+    } finally {
+      setIsLoading(false);
+    }
+  }, [data, searchTerm, isManager]);
+
+  // Gestione espansione nodi
+  const handleToggleNode = (nodeId) => {
+    setExpandedNodes(prev => ({
+      ...prev,
+      [nodeId]: !prev[nodeId]
+    }));
+  };
+
+  // Gestore menu azioni
+  const handleActionClick = (event, row) => {
+    event.stopPropagation();
+    setActionMenuAnchor(event.currentTarget);
+    setSelectedRow(row);
+  };
+
+  const handleCloseActionMenu = () => {
+    setActionMenuAnchor(null);
+  };
+  
+  // Gestori apertura pannelli
+  const handleOpenPanel = (type, id) => {
+    setActivePanelType(type);
+    setActivePanelId(id);
+    handleCloseActionMenu();
+  };
+
+  const handleClosePanel = () => {
+    setActivePanelType(null);
+    setActivePanelId(null);
+  };
+  
+  // Funzione per aprire il pannello di dettaglio dell'ordine
+  const handleOrderClick = (order, event) => {
+    if (event) {
+      event.stopPropagation();
+    }
+    
+    setSelectedOrderId(order.id);
+    
+    // Imposta l'ordine selezionato per un accesso più facile
+    setSelectedRow(order);
+    
+    // Apri il pannello di dettaglio
+    setActivePanelType('order-detail');
+    setActivePanelId(order.id);
+  };
+  
+  // Funzione per chiudere il pannello di dettaglio dell'ordine
+  const handleCloseOrderDetail = () => {
+    setSelectedOrderId(null);
+    setActivePanelType(null);
+    setActivePanelId(null);
+  };
+
+  // Formatta stato come badge
+  const formatStatusBadge = (statusCode) => {
+    const statusConfig = availableStates.find(s => s.codice === statusCode) || {
+      descrizione: statusCode || 'Sconosciuto',
+      colore: 'default'
+    };
+    
+    // Mappa i colori a valori MUI
+    const colorMap = {
+      'blue': 'primary',
+      'green': 'success',
+      'red': 'error',
+      'orange': 'warning',
+      'cyan': 'info',
+      'gray': 'default'
+    };
+    
+    const color = colorMap[statusConfig.colore] || 'default';
+    
+    return (
+      <Chip 
+        label={statusConfig.descrizione} 
+        color={color} 
+        size="small" 
+        variant="outlined"
+        sx={{ 
+          height: 20, 
+          '& .MuiChip-label': { 
+            px: 0.8, 
+            py: 0.1, 
+            fontSize: '0.65rem',
+            whiteSpace: 'nowrap' 
+          }
+        }}
+      />
+    );
+  };
+
+  // Renderizza il nodo regione
+  const renderRegionNode = (region) => {
+    const isExpanded = !!expandedNodes[region.id];
+    
+    // Calcola il conteggio totale dei POS nella regione
+    const totalPOS = region.children.reduce(
+      (sum, territory) => sum + Object.keys(territory.children).length, 
+      0
+    );
+    
+    return (
+      <Box key={region.id}>
+        <ListItem 
+          button 
+          onClick={() => handleToggleNode(region.id)}
+          sx={{ 
+            bgcolor: isExpanded ? 'action.selected' : 'inherit',
+            color: region.hasActiveOrders ? 'primary.main' : 'inherit' 
+          }}
+        >
+          <ListItemIcon>
+            {isExpanded ? 
+             <ExpandMoreIcon color={region.hasActiveOrders ? 'primary' : 'inherit'} /> : 
+             <ChevronRightIcon color={region.hasActiveOrders ? 'primary' : 'inherit'} />}
+          </ListItemIcon>
+          <ListItemText 
+            primary={region.name}
+            secondary={`${region.children.length} territori, ${totalPOS} POS`}
+            primaryTypographyProps={{ 
+              color: region.hasActiveOrders ? 'primary' : 'inherit',
+              fontWeight: region.hasActiveOrders ? 'medium' : 'normal'
+            }}
+          />
+        </ListItem>
+        <Collapse in={isExpanded} timeout="auto" unmountOnExit>
+          <List component="div" disablePadding>
+            {region.children.map(territory => renderTerritoryNode(territory))}
+          </List>
+        </Collapse>
+      </Box>
+    );
+  };
+  
+  // Renderizza il nodo territorio
+  const renderTerritoryNode = (territory) => {
+    const isExpanded = !!expandedNodes[territory.id];
+    const posCount = territory.children.length;
+    
+    return (
+      <Box key={territory.id}>
+        <ListItem 
+          button 
+          onClick={() => handleToggleNode(territory.id)}
+          sx={{ 
+            pl: 4, 
+            bgcolor: isExpanded ? 'action.selected' : 'inherit',
+            color: territory.hasActiveOrders ? 'primary.main' : 'inherit' 
+          }}
+        >
+          <ListItemIcon>
+            {isExpanded ? 
+             <ExpandMoreIcon color={territory.hasActiveOrders ? 'primary' : 'inherit'} /> : 
+             <ChevronRightIcon color={territory.hasActiveOrders ? 'primary' : 'inherit'} />}
+          </ListItemIcon>
+          <ListItemText 
+            primary={territory.name}
+            secondary={`${posCount} POS`}
+            primaryTypographyProps={{ 
+              color: territory.hasActiveOrders ? 'primary' : 'inherit',
+              fontWeight: territory.hasActiveOrders ? 'medium' : 'normal'
+            }}
+          />
+        </ListItem>
+        <Collapse in={isExpanded} timeout="auto" unmountOnExit>
+          <List component="div" disablePadding>
+            {territory.children.map(pos => renderPOSNode(pos))}
+          </List>
+        </Collapse>
+      </Box>
+    );
+  };
+  
+  // Renderizza il nodo POS
+  const renderPOSNode = (pos) => {
+    const nodeId = `pos_${pos.id}`;
+    const isExpanded = !!expandedNodes[nodeId];
+    const hasOrders = pos.children && pos.children.length > 0;
+    const hasPendingOrders = hasOrders && pos.children.some(order => order.stato !== 'completato');
+    
+    return (
+      <React.Fragment key={pos.id}>
+        <ListItem 
+          button
+          onClick={() => handleToggleNode(nodeId)}
+          sx={{ 
+            pl: 8,
+            bgcolor: isExpanded ? 'action.hover' : 'inherit',
+            color: hasPendingOrders ? 'primary.main' : 'inherit'
+          }}
+          secondaryAction={
+            <IconButton 
+              edge="end" 
+              size="small"
+              onClick={(e) => handleActionClick(e, pos)}
+            >
+              <MoreVertIcon />
+            </IconButton>
+          }
+        >
+          <ListItemIcon>
+            {hasOrders ? (isExpanded ? 
+              <ExpandMoreIcon color={hasPendingOrders ? 'primary' : 'inherit'} /> : 
+              <ChevronRightIcon color={hasPendingOrders ? 'primary' : 'inherit'} />) : 
+              <Box sx={{ width: 24 }} />}
+          </ListItemIcon>
+          <ListItemIcon>
+            <StoreIcon fontSize="small" color={hasPendingOrders ? 'primary' : 'inherit'} />
+          </ListItemIcon>
+          <ListItemText 
+            primary={
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                <Typography 
+                  variant="body2" 
+                  fontWeight={hasPendingOrders ? 'medium' : 'normal'}
+                  color={hasPendingOrders ? 'primary.main' : 'inherit'}
+                  sx={{ flexGrow: 1 }}
+                >
+                  {pos.title || pos.nome_account}
+                </Typography>
+                
+                {/* Se siamo in modalità manager e il POS ha un PM assegnato, mostriamo un badge */}
+                {isManager && pos.pm_full_name && (
+                  <Tooltip title={`PM: ${pos.pm_full_name}`}>
+                    <Avatar
+                      sx={{ 
+                        width: 20, 
+                        height: 20, 
+                        fontSize: '0.625rem',
+                        bgcolor: 'primary.light'
+                      }}
+                    >
+                      {getInitials(pos.pm_full_name)}
+                    </Avatar>
+                  </Tooltip>
+                )}
+              </Box>
+            }
+            secondary={
+              hasOrders ? `${pos.children.length} ordini` : null
+            }
+            primaryTypographyProps={{ 
+              component: 'div' // Necessario per Box come figlio
+            }}
+            secondaryTypographyProps={{ 
+              color: hasPendingOrders ? 'primary.light' : 'text.secondary'
+            }}
+          />
+        </ListItem>
+        
+        {/* Ordini del POS */}
+        {hasOrders && (
+          <Collapse in={isExpanded} timeout="auto" unmountOnExit>
+            <List component="div" disablePadding sx={{ mt: 0.5 }}>
+              {pos.children.map(order => (
+                <ListItem 
+                  key={order.id} 
+                  button
+                  onClick={(e) => handleOrderClick(order, e)}
+                  sx={{ 
+                    pl: 14,  
+                    pr: 2,
+                    py: 0.5,
+                    height: 'auto',
+                    bgcolor: selectedOrderId === order.id ? 'rgba(25, 118, 210, 0.12)' : 'inherit',
+                    '&:hover': {
+                      bgcolor: selectedOrderId === order.id ? 'rgba(25, 118, 210, 0.12)' : 'action.hover',
+                    },
+                    borderRadius: 1,
+                    my: 0.5,
+                    mx: 2
+                  }}
+                >
+                  <ListItemText 
+                    primary={
+                      <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%' }}>
+                        <Typography 
+                          variant="body2" 
+                          fontWeight={selectedOrderId === order.id ? 'bold' : 'normal'}
+                          noWrap
+                          sx={{ 
+                            flexGrow: 1,
+                            overflow: 'hidden',
+                            textOverflow: 'ellipsis',
+                            maxWidth: isManager && order.pm_full_name ? '60%' : '80%'
+                          }}
+                        >
+                          ORDINE {order.id} del {formatDate(order.data_creazione)} - {order.tipo_attivita_desc || 'N/D'}
+                        </Typography>
+                        
+                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexShrink: 0 }}>
+                          {/* Se siamo in modalità manager e l'ordine ha un PM assegnato */}
+                          {isManager && order.pm_full_name && (
+                            <Tooltip title={`PM: ${order.pm_full_name}`}>
+                              <Avatar
+                                sx={{ 
+                                  width: 20, 
+                                  height: 20, 
+                                  fontSize: '0.625rem',
+                                  bgcolor: 'primary.light'
+                                }}
+                              >
+                                {getInitials(order.pm_full_name)}
+                              </Avatar>
+                            </Tooltip>
+                          )}
+                          
+                          {formatStatusBadge(order.stato)}
+                        </Box>
+                      </Box>
+                    }
+                    secondary={null}
+                  />
+                </ListItem>
+              ))}
+            </List>
+          </Collapse>
+        )}
+      </React.Fragment>
+    );
+  };
+
+  return (
+    <>
+      <Box sx={{ display: 'flex', mb: 2, justifyContent: 'space-between' }}>
+        <TextField
+          placeholder="Cerca POS..."
+          value={searchTerm}
+          onChange={(e) => setSearchTerm(e.target.value)}
+          size="small"
+          InputProps={{
+            startAdornment: (
+              <InputAdornment position="start">
+                <SearchIcon />
+              </InputAdornment>
+            ),
+          }}
+          sx={{ width: 300 }}
+        />
+      </Box>
+      
+      <Paper sx={{ width: '100%', height: 'calc(100% - 48px)', overflow: 'hidden' }}>
+        <Box sx={{ height: '100%', overflow: 'auto' }}>
+          {isLoading ? (
+            <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100%' }}>
+              <CircularProgress />
+            </Box>
+          ) : filteredData.length > 0 ? (
+            <List component="nav">
+              {filteredData.map(region => renderRegionNode(region))}
+            </List>
+          ) : (
+            <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100%' }}>
+              <Typography>Nessun dato disponibile</Typography>
+            </Box>
+          )}
+        </Box>
+      </Paper>
+
+      {/* Menu Azioni */}
+      <Menu
+        anchorEl={actionMenuAnchor}
+        open={Boolean(actionMenuAnchor)}
+        onClose={handleCloseActionMenu}
+      >
+        <MenuItem onClick={() => handleOpenPanel('tasks', selectedRow?.id)}>
+          <TasksIcon fontSize="small" sx={{ mr: 1 }} />
+          Attività
+        </MenuItem>
+        
+        {/* Mostra opzione per cambiare stato solo se l'utente è un PM o se è manager ma il POS ha un PM assegnato */}
+        {(!isManager || (isManager && selectedRow?.pm_id)) && (
+          <MenuItem onClick={() => handleOpenPanel('status', selectedRow?.id)}>
+            <EditIcon fontSize="small" sx={{ mr: 1 }} />
+            Cambia Stato
+          </MenuItem>
+        )}
+        
+        <MenuItem onClick={() => handleOpenPanel('documents', selectedRow?.id)}>
+          <FolderIcon fontSize="small" sx={{ mr: 1 }} />
+          Documenti
+        </MenuItem>
+        
+        {/* Opzione "Assegna PM" solo per i manager */}
+        {isManager && (
+          <MenuItem onClick={() => handleOpenPanel('assign', selectedRow?.id)}>
+            <ManagerIcon fontSize="small" sx={{ mr: 1 }} />
+            Assegna PM
+          </MenuItem>
+        )}
+      </Menu>
+
+      {/* Pannelli */}
+      {activePanelType === 'tasks' && (
+        <TasksPanel 
+          posOrderId={activePanelId} 
+          onClose={handleClosePanel}
+          onUpdate={refreshData}
+          isManager={isManager}
+        />
+      )}
+
+      {activePanelType === 'status' && (
+        <StatusPanel 
+          posId={activePanelId} 
+          onClose={handleClosePanel}
+          onUpdate={refreshData}
+        />
+      )}
+
+      {activePanelType === 'documents' && (
+        <DocumentsPanel 
+          posId={activePanelId} 
+          onClose={handleClosePanel}
+        />
+      )}
+
+      {/* Qui si potrebbe aggiungere il pannello per l'assegnazione del PM */}
+      {activePanelType === 'assign' && isManager && (
+        <AssignPMPanel 
+          posId={activePanelId} 
+          onClose={handleClosePanel}
+          onUpdate={refreshData}
+        />
+      )}
+
+      {/* Pannello dettaglio ordine */}
+      {activePanelType === 'order-detail' && selectedOrderId && (
+        <OrderDetailPanel
+          posOrderId={selectedOrderId}
+          onClose={handleCloseOrderDetail}
+          onUpdate={refreshData}
+          isManager={isManager}
+        />
+      )}
+    </>
+  );
+};
+
+export default POSTree;
+
+
+# ====== File: /var/www/html/insightg/wup/r_wup/src/components/modules/DashboardPM/components/StatusPanel.jsx ======
+import React, { useState, useEffect } from 'react';
+import {
+  Box,
+  Typography,
+  Button,
+  FormControl,
+  InputLabel,
+  Select,
+  MenuItem,
+  TextField,
+  Drawer,
+  IconButton,
+  CircularProgress,
+  Alert
+} from '@mui/material';
+import { Close as CloseIcon, Save as SaveIcon } from '@mui/icons-material';
+import { updatePOSStatus } from '../api/pmApi';
+
+const StatusPanel = ({ posId, onClose, onUpdate, availableStates = [] }) => {
+  const [status, setStatus] = useState('');
+  const [reason, setReason] = useState('');
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState(null);
+  const [success, setSuccess] = useState(false);
+  const [statesList, setStatesList] = useState([]);
+  
+  // Carica gli stati disponibili se non forniti
+  useEffect(() => {
+    const fetchStatiAvanzamento = async () => {
+      if (availableStates.length === 0) {
+        try {
+          setIsLoading(true);
+          const response = await fetch('../../backend/b_tsis.php?action=getStatiAvanzamento');
+          const result = await response.json();
+          
+          if (result.success) {
+            // Filtra solo gli stati per gli ordini
+            const orderStates = result.data.filter(stato => 
+              stato.tipo === 'ordine' && stato.attivo
+            );
+            setStatesList(orderStates);
+          }
+        } catch (error) {
+          console.error('Error fetching stati avanzamento:', error);
+          setError('Errore nel caricamento degli stati');
+        } finally {
+          setIsLoading(false);
+        }
+      } else {
+        setStatesList(availableStates);
+      }
+    };
+    
+    fetchStatiAvanzamento();
+  }, [availableStates]);
+
+  // Gestione cambio stato
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    
+    try {
+      setIsLoading(true);
+      setError(null);
+      
+      const response = await updatePOSStatus(posId, status, reason);
+      
+      if (response.success) {
+        setSuccess(true);
+        
+        // Delay before closing to show success message
+        setTimeout(() => {
+          if (onUpdate) {
+            onUpdate();
+          }
+          onClose();
+        }, 1500);
+      } else {
+        setError(response.error || 'Errore nell\'aggiornamento dello stato');
+      }
+    } catch (error) {
+      console.error('Error updating POS status:', error);
+      setError('Errore nella comunicazione con il server');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+  
+  // Verifica se lo stato richiede un motivo
+  const statusRequiresReason = () => {
+    const selectedState = statesList.find(s => s.codice === status);
+    return selectedState?.codice === 'standby' || selectedState?.codice === 'non_lavorabile';
+  };
+
+  return (
+    <Drawer
+      anchor="right"
+      open={true}
+      onClose={onClose}
+      PaperProps={{
+        sx: { width: { xs: '100%', sm: 400 } }
+      }}
+    >
+      <Box sx={{ p: 2, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <Typography variant="h6">Modifica Stato</Typography>
+        <IconButton onClick={onClose}>
+          <CloseIcon />
+        </IconButton>
+      </Box>
+      
+      <Box sx={{ p: 2 }}>
+        {isLoading && !success ? (
+          <Box sx={{ display: 'flex', justifyContent: 'center', p: 4 }}>
+            <CircularProgress />
+          </Box>
+        ) : success ? (
+          <Alert severity="success">
+            Stato aggiornato con successo
+          </Alert>
+        ) : (
+          <form onSubmit={handleSubmit}>
+            {error && (
+              <Alert severity="error" sx={{ mb: 2 }}>
+                {error}
+              </Alert>
+            )}
+            
+            <FormControl fullWidth margin="normal">
+              <InputLabel>Nuovo Stato</InputLabel>
+              <Select
+                value={status}
+                label="Nuovo Stato"
+                onChange={(e) => setStatus(e.target.value)}
+                disabled={isLoading || statesList.length === 0}
+              >
+                <MenuItem value="">
+                  <em>Seleziona stato</em>
+                </MenuItem>
+                {statesList.map((stato) => (
+                  <MenuItem key={stato.codice} value={stato.codice}>
+                    {stato.descrizione}
+                  </MenuItem>
+                ))}
+              </Select>
+            </FormControl>
+            
+            <TextField
+              label="Motivo del cambio"
+              multiline
+              rows={4}
+              value={reason}
+              onChange={(e) => setReason(e.target.value)}
+              fullWidth
+              margin="normal"
+              disabled={isLoading}
+              helperText={
+                statusRequiresReason()
+                  ? 'Specificare il motivo è obbligatorio per questo stato'
+                  : undefined
+              }
+              required={statusRequiresReason()}
+            />
+            
+            <Box sx={{ mt: 3, display: 'flex', justifyContent: 'flex-end', gap: 2 }}>
+              <Button 
+                variant="outlined" 
+                onClick={onClose}
+                disabled={isLoading}
+              >
+                Annulla
+              </Button>
+              <Button 
+                type="submit" 
+                variant="contained"
+                startIcon={<SaveIcon />}
+                disabled={isLoading || !status || (statusRequiresReason() && !reason)}
+              >
+                {isLoading ? <CircularProgress size={24} /> : 'Salva'}
+              </Button>
+            </Box>
+          </form>
+        )}
+      </Box>
+    </Drawer>
+  );
+};
+
+export default StatusPanel;
+
+
+# ====== File: /var/www/html/insightg/wup/r_wup/src/components/modules/DashboardPM/ROL.sql ======
+CREATE TABLE `Anagrafica` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `Nomeaccount` text,
+  `SFRegion` text,
+  `SFDistrict` text,
+  `SFTerritory` text,
+  `Tipodirecordaccount` text,
+  `RRPSegment` text,
+  `Trade` text,
+  `CAPspedizioni` text,
+  `StatoProvinciaspedizioni` text,
+  `Cittspedizioni` text,
+  `Indirizzospedizioni` text,
+  `Telefono` text,
+  `Mobile` text,
+  `Email` text,
+  `FieldRep` text,
+  `NumeroFieldRep` text,
+  `Supervisor` text,
+  `NumeroSupervisor` text,
+  PRIMARY KEY (`id`),
+  KEY `Nomeaccount` (`Nomeaccount`(255))
+) ENGINE=InnoDB AUTO_INCREMENT=59585 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+CREATE TABLE `ClusterDONE` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `TERRITORIO` text,
+  `RRPSEGMENT` text,
+  `STATUS` text,
+  `POS` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci DEFAULT NULL,
+  `COSTUMERID` text,
+  `SRDR` text,
+  `CEL` text,
+  `ADDRESS` text,
+  `PROV` text,
+  `CAP` text,
+  `INSTALLER` text,
+  `FIXTURE` text,
+  `CODFIXTURE` text,
+  `FLOORWALL` text,
+  `RIPIANI` text,
+  `DISPOSIZONEMODULI` text,
+  `NOTEALCODICE` text,
+  `FA` text,
+  `PO` text,
+  `CODVISIBILITYBOX` text,
+  `CODSTRUMENTOVISIBILITAN1` text,
+  `CODSTRUMENTOVISIBILITAN2` text,
+  `GTKA` text,
+  `DATASOPRALLUOGO` text,
+  `SUPERVISORREPRESENTE` text,
+  `DDT` text,
+  `DATAINSTALLoRITIROoMANUT` text,
+  `ATTIVITAEFFETTUATA` text,
+  `DATAPROSSIMAATTIVITA` text,
+  `ORAPROSSIMAATTIVITA` text,
+  `NOTEPM` text,
+  `NOTEROL` text,
+  `MODULO60` text,
+  `MODULO90` text,
+  `VISIBILITY60` text,
+  `VISIBILITY90` text,
+  `LIGHTBOX60` text,
+  `LIGHTBOX90` text,
+  `MONITOR90` text,
+  `MONITOR60` text,
+  `FIANCO` text,
+  `LB_LOGOFRES` text,
+  `PROLUNGAMENTO` text,
+  `MODULOILUMA` text,
+  `CARDS` text,
+  `PUSHER` text,
+  `LIGHTTOTEM` text,
+  `WALLTOTEM60` text,
+  `WALLTOTEM90` text,
+  `COSTO` text,
+  `EXTRANONLAVORATIVO` text,
+  `ALTRIEXTRA` text,
+  `Column` text,
+  `TECNICO` text,
+  `Column_1` text,
+  PRIMARY KEY (`id`)
+) ENGINE=InnoDB AUTO_INCREMENT=8342 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+CREATE TABLE `g_anagrafica` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `nome_account` varchar(255) DEFAULT NULL,
+  `sf_region` varchar(255) DEFAULT NULL,
+  `sf_district` varchar(255) DEFAULT NULL,
+  `sf_territory` varchar(255) DEFAULT NULL,
+  `tipo_di_record_account` varchar(255) DEFAULT NULL,
+  `rrp_segment` varchar(255) DEFAULT NULL,
+  `trade` varchar(255) DEFAULT NULL,
+  `cap_spedizioni` varchar(255) DEFAULT NULL,
+  `statoprovincia_spedizioni` varchar(255) DEFAULT NULL,
+  `citt_spedizioni` varchar(255) DEFAULT NULL,
+  `indirizzo_spedizioni` varchar(255) DEFAULT NULL,
+  `telefono` varchar(255) DEFAULT NULL,
+  `mobile` varchar(255) DEFAULT NULL,
+  `email` varchar(255) DEFAULT NULL,
+  `field_rep` varchar(255) DEFAULT NULL,
+  `numero_field_rep` varchar(255) DEFAULT NULL,
+  `supervisor` varchar(255) DEFAULT NULL,
+  `numero_supervisor` varchar(255) DEFAULT NULL,
+  PRIMARY KEY (`id`)
+) ENGINE=InnoDB AUTO_INCREMENT=59585 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+CREATE TABLE `g_cluster_20250113` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `territorio` varchar(255) DEFAULT NULL,
+  `rrp_segment` varchar(255) DEFAULT NULL,
+  `status` varchar(255) DEFAULT NULL,
+  `pos` varchar(255) DEFAULT NULL,
+  `costumer_id` varchar(255) DEFAULT NULL,
+  `srdr` varchar(255) DEFAULT NULL,
+  `cel` varchar(255) DEFAULT NULL,
+  `indirizzo` varchar(255) DEFAULT NULL,
+  `prov` varchar(255) DEFAULT NULL,
+  `cap` varchar(255) DEFAULT NULL,
+  `installer` varchar(255) DEFAULT NULL,
+  `fixture` varchar(255) DEFAULT NULL,
+  `codfixture` varchar(255) DEFAULT NULL,
+  `floor_wall` varchar(255) DEFAULT NULL,
+  `ripiani` varchar(255) DEFAULT NULL,
+  `disposizione_moduli` varchar(255) DEFAULT NULL,
+  `note_al_codice` varchar(255) DEFAULT NULL,
+  `fa` varchar(255) DEFAULT NULL,
+  `pa` varchar(255) DEFAULT NULL,
+  `cod_visibility_box_sign` varchar(255) DEFAULT NULL,
+  `cod_strumento_di_visibilita_n1_interno` varchar(255) DEFAULT NULL,
+  `cod_strumento_di_visibilita_n2_window` varchar(255) DEFAULT NULL,
+  `gtka` varchar(255) DEFAULT NULL,
+  `data_sopralluogo` varchar(255) DEFAULT NULL,
+  `supervisorre_presente` varchar(255) DEFAULT NULL,
+  `numero_picking` varchar(255) DEFAULT NULL,
+  `data_install_o_ritiro_o_manut` varchar(255) DEFAULT NULL,
+  `prossima_attivita` varchar(255) DEFAULT NULL,
+  `data_prossima_attivita` varchar(255) DEFAULT NULL,
+  `ora_prossima_attivita` varchar(255) DEFAULT NULL,
+  `note_pm` varchar(255) DEFAULT NULL,
+  `note_rol` varchar(255) DEFAULT NULL,
+  `modulo_60` varchar(255) DEFAULT NULL,
+  `modulo_90` varchar(255) DEFAULT NULL,
+  `visibility_60` varchar(255) DEFAULT NULL,
+  `visibility_90` varchar(255) DEFAULT NULL,
+  `lightbox_60` varchar(255) DEFAULT NULL,
+  `lightbox_90` varchar(255) DEFAULT NULL,
+  `monitor_90` varchar(255) DEFAULT NULL,
+  `monitor_60` varchar(255) DEFAULT NULL,
+  `fianco_f` varchar(255) DEFAULT NULL,
+  `lb_logo_fres` varchar(255) DEFAULT NULL,
+  `prolungamento` varchar(255) DEFAULT NULL,
+  `modulo_iluma` varchar(255) DEFAULT NULL,
+  `cards` varchar(255) DEFAULT NULL,
+  `pusher` varchar(255) DEFAULT NULL,
+  `light_totem` varchar(255) DEFAULT NULL,
+  `wall_totem_60` varchar(255) DEFAULT NULL,
+  `wall_totem_90` varchar(255) DEFAULT NULL,
+  `costo` varchar(255) DEFAULT NULL,
+  `extra_non_lavorativo` varchar(255) DEFAULT NULL,
+  `altri_extra` varchar(255) DEFAULT NULL,
+  PRIMARY KEY (`id`)
+) ENGINE=InnoDB AUTO_INCREMENT=1085 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+CREATE TABLE `g_pos` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `area` varchar(255) DEFAULT NULL,
+  `distretto` varchar(255) DEFAULT NULL,
+  `territorio` varchar(255) DEFAULT NULL,
+  `nome_pos` varchar(255) DEFAULT NULL,
+  `prov` varchar(255) DEFAULT NULL,
+  `rrp_segment` varchar(255) DEFAULT NULL,
+  `status_pos` varchar(255) DEFAULT NULL,
+  `commenti` varchar(255) DEFAULT NULL,
+  `data_inserimento_pos` varchar(255) DEFAULT NULL,
+  `presa_in_cariconon_presa_in_carico` varchar(255) DEFAULT NULL,
+  `motivo` varchar(255) DEFAULT NULL,
+  PRIMARY KEY (`id`)
+) ENGINE=InnoDB AUTO_INCREMENT=537 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+CREATE TABLE `phonetest` (
+  `id` int NOT NULL,
+  `nome` varchar(100) NOT NULL,
+  `phone` varchar(100) NOT NULL,
+  `note` varchar(100) NOT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+CREATE TABLE `route_optimizer_plans` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `user_id` int NOT NULL,
+  `name` varchar(255) NOT NULL,
+  `description` text,
+  `plan_data` json NOT NULL,
+  `created_at` datetime DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  KEY `idx_user_id` (`user_id`),
+  KEY `idx_name` (`name`),
+  CONSTRAINT `fk_route_plans_user` FOREIGN KEY (`user_id`) REFERENCES `t_users` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB AUTO_INCREMENT=2 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+CREATE TABLE `t_camp_auto_responses` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `name` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
+  `trigger_pattern` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
+  `response_template` text CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
+  `is_regex` tinyint(1) NOT NULL DEFAULT '0',
+  `is_active` tinyint(1) NOT NULL DEFAULT '1',
+  `priority` int NOT NULL DEFAULT '0',
+  `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` timestamp NULL DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  KEY `idx_priority_active` (`priority`,`is_active`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+CREATE TABLE `t_camp_campaigns` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `name` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
+  `description` text CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci,
+  `target_table` varchar(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
+  `message_template` text CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
+  `status` enum('draft','active','paused','completed','failed') CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'draft',
+  `total_recipients` int NOT NULL DEFAULT '0',
+  `sent_count` int NOT NULL DEFAULT '0',
+  `created_by` int NOT NULL,
+  `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `started_at` timestamp NULL DEFAULT NULL,
+  `completed_at` timestamp NULL DEFAULT NULL,
+  PRIMARY KEY (`id`),
+  KEY `created_by` (`created_by`),
+  KEY `idx_status` (`status`),
+  KEY `idx_created_at` (`created_at`),
+  CONSTRAINT `t_camp_campaigns_ibfk_1` FOREIGN KEY (`created_by`) REFERENCES `t_users` (`id`)
+) ENGINE=InnoDB AUTO_INCREMENT=94 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+CREATE TABLE `t_camp_logs` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `campaign_id` int DEFAULT NULL,
+  `action_type` varchar(50) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
+  `description` text CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
+  `user_id` int DEFAULT NULL,
+  `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  KEY `campaign_id` (`campaign_id`),
+  KEY `user_id` (`user_id`),
+  KEY `idx_action_type` (`action_type`),
+  KEY `idx_created_at` (`created_at`),
+  CONSTRAINT `t_camp_logs_ibfk_1` FOREIGN KEY (`campaign_id`) REFERENCES `t_camp_campaigns` (`id`) ON DELETE SET NULL,
+  CONSTRAINT `t_camp_logs_ibfk_2` FOREIGN KEY (`user_id`) REFERENCES `t_users` (`id`) ON DELETE SET NULL
+) ENGINE=InnoDB AUTO_INCREMENT=53 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+CREATE TABLE `t_camp_messages` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `campaign_id` int NOT NULL,
+  `recipient_id` int DEFAULT NULL,
+  `sender_phone` varchar(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `ultramsg_id` varchar(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `message_content` text CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci COMMENT 'Contenuto del messaggio o caption per media',
+  `raw_data` json DEFAULT NULL,
+  `status` enum('sent','delivered','read','failed','received') CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'sent',
+  `direction` enum('inbound','outbound') CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'outbound',
+  `error_message` text CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci,
+  `data_msg` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `media_type` varchar(50) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT 'Tipo di media (image, document, video, audio, etc.)',
+  `media_url` varchar(512) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT 'URL del media da UltraMsg',
+  `media_filename` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT 'Nome originale del file',
+  `media_caption` text CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci COMMENT 'Didascalia del media',
+  `media_mimetype` varchar(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT 'MIME type del media',
+  `media_path` varchar(512) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT 'Path locale del file media',
+  `media_size` bigint DEFAULT NULL COMMENT 'Dimensione del file in bytes',
+  PRIMARY KEY (`id`),
+  KEY `campaign_id` (`campaign_id`),
+  KEY `recipient_id` (`recipient_id`),
+  KEY `idx_ultramsg_id` (`ultramsg_id`),
+  KEY `idx_status` (`status`),
+  KEY `idx_media_type` (`media_type`),
+  KEY `idx_media_url` (`media_url`(255)),
+  CONSTRAINT `t_camp_messages_ibfk_1` FOREIGN KEY (`campaign_id`) REFERENCES `t_camp_campaigns` (`id`) ON DELETE CASCADE,
+  CONSTRAINT `t_camp_messages_ibfk_2` FOREIGN KEY (`recipient_id`) REFERENCES `t_camp_recipients` (`id`)
+) ENGINE=InnoDB AUTO_INCREMENT=52 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+CREATE TABLE `t_camp_recipients` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `campaign_id` int NOT NULL,
+  `phone` varchar(50) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
+  `custom_data` json DEFAULT NULL,
+  `status` enum('pending','sent','failed') CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'pending',
+  `sent_at` timestamp NULL DEFAULT NULL,
+  `error_message` text CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci,
+  PRIMARY KEY (`id`),
+  KEY `campaign_id` (`campaign_id`),
+  KEY `idx_phone` (`phone`),
+  KEY `idx_status` (`status`),
+  CONSTRAINT `t_camp_recipients_ibfk_1` FOREIGN KEY (`campaign_id`) REFERENCES `t_camp_campaigns` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB AUTO_INCREMENT=11323 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+CREATE TABLE `t_contacts` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `phone` varchar(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
+  `name` varchar(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
+  `last_message_at` timestamp NULL DEFAULT NULL,
+  `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `idx_phone` (`phone`),
+  KEY `idx_last_message` (`last_message_at`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+CREATE TABLE `t_files` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `pos_id` int NOT NULL,
+  `user_id` varchar(50) NOT NULL,
+  `filename` varchar(255) NOT NULL,
+  `filepath` varchar(255) NOT NULL,
+  `description` text,
+  `upload_date` datetime DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  KEY `pos_id` (`pos_id`),
+  CONSTRAINT `t_files_ibfk_1` FOREIGN KEY (`pos_id`) REFERENCES `Anagrafica` (`id`)
+) ENGINE=InnoDB AUTO_INCREMENT=2 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+CREATE TABLE `t_groups` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `name` varchar(50) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
+  `description` text CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci,
+  `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `name` (`name`)
+) ENGINE=InnoDB AUTO_INCREMENT=73 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+CREATE TABLE `t_menu_items` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `name` varchar(50) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
+  `icon` varchar(50) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `page_url` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `parent_id` int DEFAULT NULL,
+  `menu_type` enum('main','sidebar','config') CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
+  `menu_order` int DEFAULT '0',
+  PRIMARY KEY (`id`),
+  KEY `idx_menu_items_parent` (`parent_id`),
+  CONSTRAINT `t_menu_items_ibfk_1` FOREIGN KEY (`parent_id`) REFERENCES `t_menu_items` (`id`) ON DELETE SET NULL
+) ENGINE=InnoDB AUTO_INCREMENT=32 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+CREATE TABLE `t_menu_permissions` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `group_id` int DEFAULT NULL,
+  `menu_id` int DEFAULT NULL,
+  `can_view` tinyint(1) DEFAULT '0',
+  `can_edit` tinyint(1) DEFAULT '0',
+  PRIMARY KEY (`id`),
+  KEY `idx_permissions_group` (`group_id`),
+  KEY `idx_permissions_menu_item` (`menu_id`),
+  CONSTRAINT `t_menu_permissions_ibfk_1` FOREIGN KEY (`group_id`) REFERENCES `t_groups` (`id`) ON DELETE CASCADE,
+  CONSTRAINT `t_menu_permissions_ibfk_2` FOREIGN KEY (`menu_id`) REFERENCES `t_menu_items` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB AUTO_INCREMENT=57 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+CREATE TABLE `t_notifications` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `user_id` int NOT NULL,
+  `message` varchar(255) NOT NULL,
+  `is_read` tinyint(1) DEFAULT '0',
+  `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  KEY `user_id` (`user_id`),
+  CONSTRAINT `t_notifications_ibfk_1` FOREIGN KEY (`user_id`) REFERENCES `t_users` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB AUTO_INCREMENT=4 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+CREATE TABLE `t_reports` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `table_name` varchar(64) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `description` text COLLATE utf8mb4_unicode_ci,
+  `sql_query` text COLLATE utf8mb4_unicode_ci NOT NULL,
+  `query_prompt` text COLLATE utf8mb4_unicode_ci,
+  `can_read` tinyint(1) DEFAULT '1',
+  `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `table_name` (`table_name`)
+) ENGINE=InnoDB AUTO_INCREMENT=4 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+CREATE TABLE `t_table` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `table_name` varchar(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
+  `description` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
+  `group_id` int NOT NULL DEFAULT '1',
+  `can_read` tinyint(1) DEFAULT '1',
+  `can_write` tinyint(1) DEFAULT '1',
+  `can_delete` tinyint(1) DEFAULT '1',
+  `import_type` enum('raw','db') CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
+  `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `table_name` (`table_name`),
+  KEY `idx_group_id` (`group_id`),
+  KEY `idx_table_name` (`table_name`)
+) ENGINE=InnoDB AUTO_INCREMENT=26417 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+CREATE TABLE `t_table_perm` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `table_name` varchar(100) NOT NULL,
+  `description` varchar(255) NOT NULL,
+  `group_id` int NOT NULL,
+  `perm_level` int NOT NULL,
+  `active` tinyint(1) DEFAULT '1',
+  `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `unique_table_group_perm` (`table_name`,`group_id`,`perm_level`)
+) ENGINE=InnoDB AUTO_INCREMENT=9 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+CREATE TABLE `t_user_groups` (
+  `user_id` int NOT NULL,
+  `group_id` int NOT NULL,
+  PRIMARY KEY (`user_id`,`group_id`),
+  KEY `group_id` (`group_id`),
+  CONSTRAINT `t_user_groups_ibfk_1` FOREIGN KEY (`user_id`) REFERENCES `t_users` (`id`) ON DELETE CASCADE,
+  CONSTRAINT `t_user_groups_ibfk_2` FOREIGN KEY (`group_id`) REFERENCES `t_groups` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+CREATE TABLE `t_users` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `username` varchar(50) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
+  `password` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
+  `email` varchar(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
+  `full_name` varchar(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `is_active` tinyint(1) DEFAULT '1',
+  `last_login` datetime DEFAULT NULL,
+  `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `username` (`username`),
+  UNIQUE KEY `email` (`email`),
+  KEY `idx_users_username` (`username`),
+  KEY `idx_users_email` (`email`)
+) ENGINE=InnoDB AUTO_INCREMENT=771 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+CREATE TABLE `tsis_anagrafica` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `nome_account` varchar(255) DEFAULT NULL,
+  `sf_region` varchar(255) DEFAULT NULL,
+  `sf_district` varchar(255) DEFAULT NULL,
+  `sf_territory` varchar(255) DEFAULT NULL,
+  `tipo_di_record_account` varchar(255) DEFAULT NULL,
+  `rrp_segment` varchar(255) DEFAULT NULL,
+  `trade` varchar(255) DEFAULT NULL,
+  `cap_spedizioni` varchar(255) DEFAULT NULL,
+  `statoprovincia_spedizioni` varchar(255) DEFAULT NULL,
+  `citt_spedizioni` varchar(255) DEFAULT NULL,
+  `indirizzo_spedizioni` varchar(255) DEFAULT NULL,
+  `telefono` varchar(255) DEFAULT NULL,
+  `mobile` varchar(255) DEFAULT NULL,
+  `email` varchar(255) DEFAULT NULL,
+  `field_rep` varchar(255) DEFAULT NULL,
+  `numero_field_rep` varchar(255) DEFAULT NULL,
+  `supervisor` varchar(255) DEFAULT NULL,
+  `numero_supervisor` varchar(255) DEFAULT NULL,
+  `tree_data` json DEFAULT NULL,
+  `tree_updated_at` timestamp NULL DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `idx_nome_account` (`nome_account`),
+  KEY `idx_region` (`sf_region`),
+  KEY `idx_district` (`sf_district`),
+  KEY `idx_territory` (`sf_territory`),
+  KEY `idx_rrp_segment` (`rrp_segment`)
+) ENGINE=InnoDB AUTO_INCREMENT=238351 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+CREATE TABLE `tsis_attivita_ordine_pos` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `codice` varchar(50) NOT NULL,
+  `descrizione` text,
+  `template_data` json DEFAULT NULL,
+  `attivo` tinyint(1) DEFAULT '1',
+  `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+  `data_creazione` datetime DEFAULT CURRENT_TIMESTAMP,
+  `utente_creazione` int DEFAULT NULL,
+  `data_modifica` datetime DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP,
+  `utente_modifica` int DEFAULT NULL,
+  `updated_by` int DEFAULT NULL,
+  `updated_at` timestamp NULL DEFAULT NULL,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `codice` (`codice`),
+  KEY `utente_creazione` (`utente_creazione`),
+  KEY `utente_modifica` (`utente_modifica`),
+  KEY `updated_by` (`updated_by`),
+  CONSTRAINT `tsis_attivita_ordine_pos_ibfk_1` FOREIGN KEY (`utente_creazione`) REFERENCES `t_users` (`id`),
+  CONSTRAINT `tsis_attivita_ordine_pos_ibfk_2` FOREIGN KEY (`utente_modifica`) REFERENCES `t_users` (`id`),
+  CONSTRAINT `tsis_attivita_ordine_pos_ibfk_3` FOREIGN KEY (`updated_by`) REFERENCES `t_users` (`id`)
+) ENGINE=InnoDB AUTO_INCREMENT=16 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+CREATE TABLE `tsis_geocode_cache` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `address` varchar(255) NOT NULL,
+  `lat` float(10,6) NOT NULL,
+  `lng` float(10,6) NOT NULL,
+  `formatted_address` text,
+  `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `address` (`address`)
+) ENGINE=InnoDB AUTO_INCREMENT=77 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+CREATE TABLE `tsis_pm_config` (
+  `user_id` int NOT NULL,
+  `area_competenza` varchar(255) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `max_pos_assegnabili` int DEFAULT '50',
+  `note` text COLLATE utf8mb4_unicode_ci,
+  `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` timestamp NULL DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`user_id`),
+  CONSTRAINT `tsis_pm_config_ibfk_1` FOREIGN KEY (`user_id`) REFERENCES `t_users` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+CREATE TABLE `tsis_pos_imports` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `nome_documento` varchar(255) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `nome_file_salvato` varchar(255) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `percorso_file` varchar(512) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `importato_da` int NOT NULL,
+  `numero_pos` int DEFAULT '0',
+  `stato` enum('nuovo','in_corso','completato','completato_con_errori','errore') COLLATE utf8mb4_unicode_ci DEFAULT 'nuovo',
+  `note_importazione` text COLLATE utf8mb4_unicode_ci,
+  `data_inizio` datetime DEFAULT NULL,
+  `data_creazione` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+  `data_completamento` datetime DEFAULT NULL,
+  PRIMARY KEY (`id`),
+  KEY `tsis_pos_imports_ibfk_1` (`importato_da`),
+  CONSTRAINT `tsis_pos_imports_ibfk_1` FOREIGN KEY (`importato_da`) REFERENCES `t_users` (`id`)
+) ENGINE=InnoDB AUTO_INCREMENT=40 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+CREATE TABLE `tsis_pos_log` (
+  `id` bigint NOT NULL AUTO_INCREMENT,
+  `pos_id` bigint NOT NULL,
+  `tipo_operazione` varchar(50) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `dati_precedenti` text COLLATE utf8mb4_unicode_ci,
+  `motivo_operazione` text COLLATE utf8mb4_unicode_ci,
+  `utente_id` bigint DEFAULT NULL,
+  `data_operazione` datetime NOT NULL,
+  PRIMARY KEY (`id`),
+  KEY `idx_pos_id` (`pos_id`),
+  KEY `idx_utente_id` (`utente_id`),
+  KEY `idx_data_operazione` (`data_operazione`)
+) ENGINE=InnoDB AUTO_INCREMENT=1618 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+CREATE TABLE `tsis_pos_management` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `import_id` int NOT NULL,
+  `pos_id` int NOT NULL,
+  `pm_id` int DEFAULT NULL,
+  `stato` varchar(50) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `motivo_standby` text COLLATE utf8mb4_unicode_ci,
+  `motivo_chiusura` text COLLATE utf8mb4_unicode_ci,
+  `commenti_cliente` text COLLATE utf8mb4_unicode_ci,
+  `commenti_interni` text COLLATE utf8mb4_unicode_ci,
+  `data_assegnazione` datetime DEFAULT NULL,
+  `data_inizio_lavorazione` datetime DEFAULT NULL,
+  `data_ultimo_stato` datetime DEFAULT NULL,
+  `data_creazione` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+  `data_modifica` timestamp NULL DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP,
+  `tipo_attivita_id` int DEFAULT NULL,
+  `data_ordine` date DEFAULT NULL,
+  `codice_ordine` varchar(100) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `codice_po_fornitore` varchar(100) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `tasks_data` json DEFAULT NULL,
+  `updated_at` timestamp NULL DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP,
+  `updated_by` int DEFAULT NULL,
+  `id_stato` int DEFAULT NULL,
+  `progress` int DEFAULT '0',
+  `version` varchar(10) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  PRIMARY KEY (`id`),
+  KEY `idx_pos_stato` (`stato`),
+  KEY `idx_pos_pm` (`pm_id`),
+  KEY `idx_pos_date` (`data_assegnazione`,`data_ultimo_stato`),
+  KEY `idx_codice_po_fornitore` (`codice_po_fornitore`),
+  KEY `tsis_pos_management_ibfk_1` (`import_id`),
+  KEY `fk_tipo_attivita` (`tipo_attivita_id`),
+  KEY `fk_updated_by` (`updated_by`),
+  KEY `idx_updated_at` (`updated_at`),
+  KEY `fk_stato_avanzamento` (`id_stato`),
+  CONSTRAINT `fk_pm_user` FOREIGN KEY (`pm_id`) REFERENCES `t_users` (`id`),
+  CONSTRAINT `fk_pos_management_stato` FOREIGN KEY (`id_stato`) REFERENCES `tsis_stati_avanzamento` (`id`),
+  CONSTRAINT `fk_stato_avanzamento` FOREIGN KEY (`id_stato`) REFERENCES `tsis_stati_avanzamento` (`id`) ON DELETE RESTRICT ON UPDATE CASCADE,
+  CONSTRAINT `fk_tipo_attivita` FOREIGN KEY (`tipo_attivita_id`) REFERENCES `tsis_attivita_ordine_pos` (`id`),
+  CONSTRAINT `fk_updated_by` FOREIGN KEY (`updated_by`) REFERENCES `t_users` (`id`),
+  CONSTRAINT `tsis_pos_management_ibfk_1` FOREIGN KEY (`import_id`) REFERENCES `tsis_pos_imports` (`id`)
+) ENGINE=InnoDB AUTO_INCREMENT=2741 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+CREATE TABLE `tsis_pos_management_pm_backup` (
+  `id` int NOT NULL DEFAULT '0',
+  `pm_id` int DEFAULT NULL,
+  `data_assegnazione` datetime DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+CREATE TABLE `tsis_pos_task_templates` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `name` varchar(100) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `description` text COLLATE utf8mb4_unicode_ci,
+  `tipo_attivita_id` int NOT NULL,
+  `is_active` tinyint(1) DEFAULT '1',
+  `template_data` json NOT NULL,
+  `created_by` int NOT NULL,
+  `created_at` datetime DEFAULT CURRENT_TIMESTAMP,
+  `updated_by` int DEFAULT NULL,
+  `updated_at` datetime DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  KEY `tipo_attivita_id` (`tipo_attivita_id`),
+  KEY `created_by` (`created_by`),
+  KEY `updated_by` (`updated_by`),
+  CONSTRAINT `tsis_pos_task_templates_ibfk_1` FOREIGN KEY (`tipo_attivita_id`) REFERENCES `tsis_attivita_ordine_pos` (`id`),
+  CONSTRAINT `tsis_pos_task_templates_ibfk_2` FOREIGN KEY (`created_by`) REFERENCES `t_users` (`id`),
+  CONSTRAINT `tsis_pos_task_templates_ibfk_3` FOREIGN KEY (`updated_by`) REFERENCES `t_users` (`id`)
+) ENGINE=InnoDB AUTO_INCREMENT=3 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+CREATE TABLE `tsis_route_optimizations` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `user_id` int NOT NULL,
+  `optimization_date` datetime NOT NULL,
+  `start_point` varchar(255) NOT NULL,
+  `total_stops` int NOT NULL DEFAULT '0',
+  `total_distance_km` float NOT NULL DEFAULT '0',
+  `total_time_minutes` float NOT NULL DEFAULT '0',
+  `route_data` json DEFAULT NULL,
+  `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  KEY `idx_user_id` (`user_id`),
+  KEY `idx_date` (`optimization_date`),
+  CONSTRAINT `fk_route_opt_user` FOREIGN KEY (`user_id`) REFERENCES `t_users` (`id`)
+) ENGINE=InnoDB AUTO_INCREMENT=3 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+CREATE TABLE `tsis_route_pos` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `route_id` int NOT NULL,
+  `pos_id` int NOT NULL,
+  `visit_duration` int NOT NULL DEFAULT '30',
+  `priority` enum('high','normal','low') DEFAULT 'normal',
+  `stop_order` int NOT NULL DEFAULT '0',
+  PRIMARY KEY (`id`),
+  KEY `idx_route_pos` (`route_id`,`pos_id`),
+  CONSTRAINT `fk_route_pos_route` FOREIGN KEY (`route_id`) REFERENCES `tsis_saved_routes` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+CREATE TABLE `tsis_saved_routes` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `name` varchar(255) NOT NULL,
+  `description` text,
+  `user_id` int NOT NULL,
+  `total_stops` int NOT NULL DEFAULT '0',
+  `total_distance_km` float NOT NULL DEFAULT '0',
+  `total_time_minutes` float NOT NULL DEFAULT '0',
+  `route_data` json DEFAULT NULL,
+  `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` timestamp NULL DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP,
+  `is_template` tinyint(1) DEFAULT '0',
+  PRIMARY KEY (`id`),
+  KEY `idx_route_user` (`user_id`),
+  CONSTRAINT `fk_saved_route_user` FOREIGN KEY (`user_id`) REFERENCES `t_users` (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+CREATE TABLE `tsis_stati_avanzamento` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `codice` varchar(50) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
+  `descrizione` varchar(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
+  `tipo` enum('ordine','task','subtask') CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
+  `ordine` int NOT NULL DEFAULT '0',
+  `colore` varchar(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `icona` varchar(50) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `attivo` tinyint(1) DEFAULT '1',
+  `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_codice_tipo` (`codice`,`tipo`)
+) ENGINE=InnoDB AUTO_INCREMENT=24 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+CREATE TABLE `w_rol_accessories` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `code` varchar(50) NOT NULL,
+  `name` varchar(255) NOT NULL,
+  `description` text,
+  `category` enum('VISIBILITY','LIGHTBOX','MONITOR','EXTENSION') NOT NULL,
+  `compatible_width` varchar(50) DEFAULT 'all',
+  `active` tinyint(1) DEFAULT '1',
+  `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  KEY `idx_accessory_active` (`active`),
+  KEY `idx_accessory_category` (`category`)
+) ENGINE=InnoDB AUTO_INCREMENT=11 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+CREATE TABLE `w_rol_configurations` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `name` varchar(255) NOT NULL,
+  `description` text,
+  `created_by` int DEFAULT NULL,
+  `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  `status` enum('draft','active','archived') DEFAULT 'draft',
+  PRIMARY KEY (`id`),
+  KEY `idx_config_status` (`status`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+CREATE TABLE `w_rol_module_accessories` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `module_id` int DEFAULT NULL,
+  `accessory_id` int DEFAULT NULL,
+  PRIMARY KEY (`id`),
+  KEY `accessory_id` (`accessory_id`),
+  KEY `idx_module_accessories` (`module_id`,`accessory_id`),
+  CONSTRAINT `w_rol_module_accessories_ibfk_1` FOREIGN KEY (`module_id`) REFERENCES `w_rol_modules` (`id`) ON DELETE CASCADE,
+  CONSTRAINT `w_rol_module_accessories_ibfk_2` FOREIGN KEY (`accessory_id`) REFERENCES `w_rol_accessories` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+CREATE TABLE `w_rol_modules` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `configuration_id` int DEFAULT NULL,
+  `module_type` varchar(50) NOT NULL,
+  `position` int NOT NULL,
+  `shelves_count` int DEFAULT '7',
+  PRIMARY KEY (`id`),
+  KEY `idx_module_config` (`configuration_id`),
+  KEY `idx_module_type` (`module_type`),
+  CONSTRAINT `w_rol_modules_ibfk_1` FOREIGN KEY (`configuration_id`) REFERENCES `w_rol_configurations` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
+

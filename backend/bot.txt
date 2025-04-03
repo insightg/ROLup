@@ -1,0 +1,3834 @@
+
+### Contenuto di ../pages/w_bot.php ###
+
+<?php
+require_once '../common/head.php';
+
+// Get domain for CSS configuration
+$domainParts = explode('.', $_SERVER['HTTP_HOST']);
+$thirdLevelDomain = $domainParts[0];
+
+$config = parse_ini_file("../config/{$thirdLevelDomain}/config.ini", true);
+$cssPath = "../config/{$thirdLevelDomain}/root.css";
+?>
+<!DOCTYPE html>
+<html lang="it">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Smart Bot - Gestione Conversazioni</title>
+    
+    <!-- CSS -->
+    <link rel="stylesheet" href="<?php echo htmlspecialchars($cssPath); ?>">
+    <link rel="stylesheet" href="../css/bot.css">
+    <link href="https://unpkg.com/tabulator-tables@5.4.4/dist/css/tabulator.min.css" rel="stylesheet">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    
+    <!-- JavaScript -->
+    <script src="https://unpkg.com/tabulator-tables@5.4.4/dist/js/tabulator.min.js"></script>
+</head>
+<body>
+    <div class="app-container">
+        <!-- Header -->
+        <div class="header-actions">
+            <button class="refresh-btn" onclick="window.botManager.refreshData()">
+                <i class="fas fa-sync-alt"></i>
+            </button>
+            
+            <button class="add-btn" onclick="window.botManager.openNewFlow()" title="Nuovo Flusso">
+                <i class="fas fa-plus"></i>
+            </button>
+        </div>
+
+        <!-- Stats Panel -->
+        <div class="stats-panel">
+            <div class="stats-grid">
+                <div class="stat-card">
+                    <div class="stat-value" id="total-conversations">0</div>
+                    <div class="stat-label">Conversazioni Attive</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value" id="total-interactions">0</div>
+                    <div class="stat-label">Interazioni Totali</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value" id="conversion-rate">0%</div>
+                    <div class="stat-label">Tasso di Conversione</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value" id="active-leads">0</div>
+                    <div class="stat-label">Lead Generati</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Tab Navigation -->
+        <div class="tab-bar">
+            <div class="tabs-group">
+                <button class="tab active" data-panel="flows">
+                    <i class="fas fa-diagram-project"></i> Flussi
+                </button>
+                <button class="tab" data-panel="conversations">
+                    <i class="fas fa-comments"></i> Conversazioni
+                </button>
+                <button class="tab" data-panel="leads">
+                    <i class="fas fa-funnel-dollar"></i> Lead
+                </button>
+            </div>
+        </div>
+
+        <!-- Panels Container -->
+        <div class="panel-container">
+            <!-- Flows Panel -->
+            <div id="flows-panel" class="panel active">
+                <div class="panel-content">
+                    <div id="flows-table"></div>
+                </div>
+            </div>
+
+            <!-- Conversations Panel -->
+            <div id="conversations-panel" class="panel">
+                <div class="panel-content">
+                    <div id="conversations-table"></div>
+                </div>
+            </div>
+
+            <!-- Leads Panel -->
+            <div id="leads-panel" class="panel">
+                <div class="panel-content">
+                    <div id="leads-table"></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Flow Editor Panel -->
+        <div id="flow-editor-panel" class="sliding-panel">
+            <div class="sliding-panel-header">
+                <h3>Editor Flusso</h3>
+                <button class="close-btn" onclick="window.botManager.closePanel('flow-editor-panel')">
+                    <i class="fas fa-times"></i>
+                </button>
+            </div>
+            <div class="sliding-panel-body">
+                <form id="flow-form">
+                    <div class="form-group">
+                        <label for="flow-name">Nome Flusso</label>
+                        <input type="text" id="flow-name" class="form-input" required>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="source-table">Tabella Origine</label>
+                        <select id="source-table" class="form-input" required>
+                            <option value="">Seleziona tabella...</option>
+                        </select>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="phone-field">Campo Telefono</label>
+                        <select id="phone-field" class="form-input" required>
+                            <option value="">Seleziona campo...</option>
+                        </select>
+                    </div>
+
+                    <div class="form-group">
+                        <label>Saluto Iniziale</label>
+                        <div class="template-controls">
+                            <button type="button" class="btn-secondary insert-placeholder">
+                                <i class="fas fa-plus"></i> Inserisci Campo
+                            </button>
+                        </div>
+                        <textarea id="welcome-message" class="message-editor" required></textarea>
+                        <div class="template-help">
+                            <div id="available-placeholders"></div>
+                        </div>
+                    </div>
+
+                    <div class="form-group">
+                        <label>Flusso Conversazione</label>
+                        <div id="flow-steps"></div>
+                        <button type="button" class="btn-secondary add-step">
+                            <i class="fas fa-plus"></i> Aggiungi Step
+                        </button>
+                    </div>
+                </form>
+            </div>
+            <div class="sliding-panel-actions">
+                <div class="button-group">
+                    <button type="submit" form="flow-form" class="btn-primary">
+                        <i class="fas fa-save"></i> Salva
+                    </button>
+                    <button type="button" class="btn-secondary" onclick="window.botManager.closePanel('flow-editor-panel')">
+                        Annulla
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Conversation Detail Panel -->
+        <div id="conversation-detail-panel" class="sliding-panel">
+            <div class="sliding-panel-header">
+                <h3>Dettaglio Conversazione</h3>
+                <button class="close-btn" onclick="window.botManager.closePanel('conversation-detail-panel')">
+                    <i class="fas fa-times"></i>
+                </button>
+            </div>
+            <div class="sliding-panel-body">
+                <div class="conversation-info">
+                    <div class="info-group">
+                        <label>Contatto</label>
+                        <div id="contact-info"></div>
+                    </div>
+                    <div class="info-group">
+                        <label>Flusso</label>
+                        <div id="flow-info"></div>
+                    </div>
+                </div>
+                <div class="message-timeline"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- JavaScript -->
+    <script src="../js/j_bot.js"></script>
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            window.botManager = new BotManager({
+                apiPath: '../backend/b_bot.php',
+                debug: <?php echo isset($config['app']['debug']) ? ($config['app']['debug'] ? 'true' : 'false') : 'false'; ?>
+            });
+            
+            window.botManager.init().catch(console.error);
+        });
+    </script>
+</body>
+</html>
+### Contenuto di ../js/j_bot.js ###
+
+class BotManager {
+    constructor(config) {
+        this.config = config;
+        this.tables = {};
+        this.currentTab = 'flows';
+        this.selectedFlow = null;
+        this.notificationTimeout = null;
+        this.isSubmitting = false;
+    }
+
+    async init() {
+        try {
+            await this.loadInitialData();
+            this.initTables();
+            this.initEventListeners();
+            this.setupAutoRefresh();
+        } catch (error) {
+            this.showError('Errore durante l\'inizializzazione: ' + error.message);
+        }
+    }
+
+// Metodi di formattazione da aggiungere all'inizio della classe BotManager
+
+formatFlowActions(cell) {
+    const flow = cell.getRow().getData();
+    return `
+        <button class="action-btn view" onclick="window.botManager.viewFlow(${flow.id})" title="Visualizza">
+            <i class="fas fa-eye"></i>
+        </button>
+        <button class="action-btn ${flow.is_active ? 'pause' : 'play'}" 
+                onclick="window.botManager.toggleFlow(${flow.id})" 
+                title="${flow.is_active ? 'Disattiva' : 'Attiva'}">
+            <i class="fas fa-${flow.is_active ? 'pause' : 'play'}"></i>
+        </button>
+        <button class="action-btn delete" onclick="window.botManager.deleteFlow(${flow.id})" title="Elimina">
+            <i class="fas fa-trash"></i>
+        </button>
+    `;
+}
+
+formatConversationActions(cell) {
+    const conversation = cell.getRow().getData();
+    return `
+        <button class="action-btn view" onclick="window.botManager.viewConversation(${conversation.id})" title="Visualizza">
+            <i class="fas fa-eye"></i>
+        </button>
+    `;
+}
+
+formatDateTime(cell) {
+    if (!cell.getValue()) return '';
+    const date = new Date(cell.getValue());
+    return date.toLocaleString('it-IT', {
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit'
+    });
+}
+
+formatPhone(cell) {
+    const phone = cell.getValue();
+    if (!phone) return 'N/D';
+    
+    let cleaned = String(phone).replace(/\D/g, '');
+    if (cleaned.startsWith('39') && cleaned.length > 10) {
+        cleaned = cleaned.substring(2);
+    }
+    return cleaned.replace(/(\d{3})(\d{3})(\d{4})/, '+39 $1 $2 $3');
+}
+
+formatLeadStatus(cell) {
+    const status = cell.getValue();
+    const statusMap = {
+        'new': ['status-badge warning', 'Nuovo'],
+        'processing': ['status-badge info', 'In Lavorazione'],
+        'completed': ['status-badge success', 'Completato'],
+        'failed': ['status-badge error', 'Fallito']
+    };
+    
+    const [className, label] = statusMap[status] || ['status-badge', status];
+    return `<span class="${className}">${label}</span>`;
+}
+
+formatStatus(cell) {
+    const status = cell.getValue();
+    const statusMap = {
+        'draft': ['status-badge draft', 'Bozza'],
+        'active': ['status-badge active', 'Attivo'],
+        'paused': ['status-badge warning', 'In Pausa'],
+        'completed': ['status-badge success', 'Completato'],
+        'failed': ['status-badge error', 'Fallito']
+    };
+    
+    const [className, label] = statusMap[status] || ['status-badge', status];
+    return `<span class="${className}">${label}</span>`;
+}
+
+formatMessageType(cell) {
+    const type = cell.getValue();
+    const typeMap = {
+        'text': ['message-type text', '<i class="fas fa-comment"></i> Testo'],
+        'image': ['message-type image', '<i class="fas fa-image"></i> Immagine'],
+        'document': ['message-type document', '<i class="fas fa-file"></i> Documento'],
+        'choice': ['message-type choice', '<i class="fas fa-question-circle"></i> Scelta'],
+        'input': ['message-type input', '<i class="fas fa-keyboard"></i> Input']
+    };
+    
+    const [className, label] = typeMap[type] || ['message-type', type];
+    return `<span class="${className}">${label}</span>`;
+}
+
+
+// Add these methods to the BotManager class
+
+showTab(tabId) {
+    // Update active tab state
+    document.querySelectorAll('.tab').forEach(tab => {
+        tab.classList.toggle('active', tab.getAttribute('data-panel') === tabId);
+    });
+
+    // Update visible panel
+    document.querySelectorAll('.panel').forEach(panel => {
+        panel.classList.toggle('active', panel.id === `${tabId}-panel`);
+    });
+
+    // Store current tab
+    this.currentTab = tabId;
+
+    // Refresh the active table if it exists
+    if (this.tables[tabId]) {
+        this.tables[tabId].redraw(true);
+    }
+}
+
+openNewFlow() {
+    // Reset form
+    document.getElementById('flow-form').reset();
+    
+    // Clear flow steps
+    document.getElementById('flow-steps').innerHTML = '';
+    
+    // Clear placeholders
+    document.getElementById('available-placeholders').innerHTML = '';
+    
+    // Reset phone field select
+    const phoneSelect = document.getElementById('phone-field');
+    if (phoneSelect) {
+        phoneSelect.innerHTML = '<option value="">Seleziona campo telefono...</option>';
+    }
+    
+    // Show the panel
+    this.showPanel('flow-editor-panel');
+}
+
+viewFlow(flowId) {
+    // Fetch flow details and populate editor
+    this.fetchWithDebug(`${this.config.apiPath}?action=getFlow&id=${flowId}`)
+        .then(response => {
+            if (!response.success) {
+                throw new Error('Errore nel caricamento del flusso');
+            }
+
+            const flow = response.data;
+            this.selectedFlow = flow;
+
+            // Populate basic fields
+            document.getElementById('flow-name').value = flow.name;
+            document.getElementById('source-table').value = flow.source_table;
+            document.getElementById('welcome-message').value = flow.welcome_message;
+
+            // Handle table change to load fields
+            this.handleTableChange(flow.source_table).then(() => {
+                document.getElementById('phone-field').value = flow.phone_field;
+            });
+
+            // Clear existing steps
+            document.getElementById('flow-steps').innerHTML = '';
+
+            // Add flow steps
+            const flowData = typeof flow.flow_data === 'string' ? 
+                JSON.parse(flow.flow_data) : flow.flow_data;
+
+            flowData.steps.forEach(step => this.addExistingStep(step));
+
+            // Show panel
+            this.showPanel('flow-editor-panel');
+        })
+        .catch(error => {
+            console.error('Error viewing flow:', error);
+            this.showError('Errore nella visualizzazione del flusso');
+        });
+}
+
+addExistingStep(stepData) {
+    const stepsContainer = document.getElementById('flow-steps');
+    const stepHtml = `
+        <div class="flow-step" data-step-id="${stepData.id}">
+            <div class="step-header">
+                <span class="step-title">Step ${stepsContainer.children.length + 1}</span>
+                <button type="button" class="btn-danger remove-step" onclick="window.botManager.removeStep('${stepData.id}')">
+                    <i class="fas fa-trash"></i>
+                </button>
+            </div>
+            
+            <div class="form-group">
+                <label>Tipo Step</label>
+                <select class="form-input step-type" onchange="window.botManager.updateStepOptions('${stepData.id}')">
+                    <option value="message" ${stepData.type === 'message' ? 'selected' : ''}>Messaggio</option>
+                    <option value="choice" ${stepData.type === 'choice' ? 'selected' : ''}>Scelta</option>
+                    <option value="input" ${stepData.type === 'input' ? 'selected' : ''}>Input</option>
+                    <option value="end" ${stepData.type === 'end' ? 'selected' : ''}>Fine</option>
+                </select>
+            </div>
+
+            <div class="form-group">
+                <label>Messaggio</label>
+                <textarea class="message-editor step-message" required>${stepData.message || ''}</textarea>
+            </div>
+
+            <div class="step-options"></div>
+        </div>
+    `;
+
+    stepsContainer.insertAdjacentHTML('beforeend', stepHtml);
+    
+    // Update step options and populate values
+    const step = stepsContainer.lastElementChild;
+    this.updateStepOptions(stepData.id);
+    
+    // Populate step-specific fields
+    switch (stepData.type) {
+        case 'choice':
+            if (stepData.generate_lead) {
+                step.querySelector('.step-generate-lead').checked = true;
+                step.querySelector('.step-lead-type').value = stepData.lead_type;
+                step.querySelector('.lead-options').style.display = 'block';
+            }
+            step.querySelector('.step-yes-next').value = stepData.yes_step;
+            step.querySelector('.step-no-next').value = stepData.no_step;
+            break;
+
+        case 'input':
+            step.querySelector('.step-save-as').value = stepData.save_as;
+            step.querySelector('.step-next').value = stepData.next_step;
+            break;
+    }
+}
+
+async toggleFlow(flowId) {
+    try {
+        const response = await this.fetchWithDebug(
+            this.config.apiPath,
+            {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    action: 'toggleFlow',
+                    id: flowId
+                })
+            }
+        );
+
+        if (!response.success) {
+            throw new Error('Errore nella modifica dello stato del flusso');
+        }
+
+        await this.refreshData();
+        this.showSuccess('Stato del flusso aggiornato con successo');
+
+    } catch (error) {
+        console.error('Error toggling flow:', error);
+        this.showError('Errore nella modifica dello stato del flusso');
+    }
+}
+
+async deleteFlow(flowId) {
+    if (!confirm('Sei sicuro di voler eliminare questo flusso?')) {
+        return;
+    }
+
+    try {
+        const response = await this.fetchWithDebug(
+            `${this.config.apiPath}?action=deleteFlow&id=${flowId}`
+        );
+
+        if (!response.success) {
+            throw new Error('Errore nell\'eliminazione del flusso');
+        }
+
+        await this.refreshData();
+        this.showSuccess('Flusso eliminato con successo');
+
+    } catch (error) {
+        console.error('Error deleting flow:', error);
+        this.showError('Errore nell\'eliminazione del flusso');
+    }
+}
+
+
+    initTables() {
+        // Tabella dei flussi
+        this.tables.flows = new Tabulator("#flows-table", {
+            ajaxURL: this.config.apiPath,
+            ajaxParams: { action: 'getFlows' },
+            ajaxResponse: (url, params, response) => {
+                return response.success ? response.data : [];
+            },
+            layout: "fitColumns",
+            pagination: true,
+            paginationSize: 25,
+            columns: [
+                { 
+                    formatter: this.formatFlowActions.bind(this),
+                    width: 120,
+                    hozAlign: "center",
+                    headerSort: false,
+                    frozen: true
+                },
+                { 
+                    title: "Nome",
+                    field: "name",
+                    headerFilter: true
+                },
+                { 
+                    title: "Tabella",
+                    field: "source_table",
+                    headerFilter: true
+                },
+                { 
+                    title: "Stato",
+                    field: "is_active",
+                    formatter: "tickCross",
+                    width: 80,
+                    hozAlign: "center"
+                },
+                { 
+                    title: "Conversazioni",
+                    field: "total_conversations",
+                    hozAlign: "center",
+                    width: 120
+                },
+                { 
+                    title: "Completate",
+                    field: "completed_conversations",
+                    hozAlign: "center",
+                    width: 120
+                },
+                { 
+                    title: "Lead",
+                    field: "total_leads",
+                    hozAlign: "center",
+                    width: 80
+                }
+            ]
+        });
+
+        // Tabella delle conversazioni
+        this.tables.conversations = new Tabulator("#conversations-table", {
+            ajaxURL: this.config.apiPath,
+            ajaxParams: { action: 'getConversations' },
+            ajaxResponse: (url, params, response) => {
+                return response.success ? response.data : [];
+            },
+            layout: "fitColumns",
+            pagination: true,
+            paginationSize: 25,
+            columns: [
+                { 
+                    formatter: this.formatConversationActions.bind(this),
+                    width: 80,
+                    hozAlign: "center",
+                    headerSort: false,
+                    frozen: true
+                },
+                { 
+                    title: "Data Inizio",
+                    field: "started_at",
+                    formatter: this.formatDateTime.bind(this),
+                    headerFilter: true
+                },
+                { 
+                    title: "Flusso",
+                    field: "flow_name",
+                    headerFilter: true
+                },
+                { 
+                    title: "Contatto",
+                    field: "contact_name",
+                    headerFilter: true
+                },
+                { 
+                    title: "Telefono",
+                    field: "contact_phone",
+                    formatter: this.formatPhone.bind(this),
+                    headerFilter: true
+                },
+                { 
+                    title: "Messaggi",
+                    field: "messages_count",
+                    hozAlign: "center",
+                    width: 100
+                },
+                { 
+                    title: "Stato",
+                    field: "is_completed",
+                    formatter: (cell) => {
+                        const completed = cell.getValue();
+                        return completed ? 
+                            '<span class="status-badge success">Completata</span>' : 
+                            '<span class="status-badge warning">In corso</span>';
+                    },
+                    headerFilter: true,
+                    headerFilterParams: {
+                        values: {
+                            "true": "Completata",
+                            "false": "In corso"
+                        }
+                    },
+                    width: 120
+                }
+            ]
+        });
+
+        // Tabella dei lead
+        this.tables.leads = new Tabulator("#leads-table", {
+            ajaxURL: this.config.apiPath,
+            ajaxParams: { action: 'getLeads' },
+            ajaxResponse: (url, params, response) => {
+                return response.success ? response.data : [];
+            },
+            layout: "fitColumns",
+            pagination: true,
+            paginationSize: 25,
+            columns: [
+                { 
+                    title: "Data",
+                    field: "created_at",
+                    formatter: this.formatDateTime.bind(this),
+                    headerFilter: true
+                },
+                { 
+                    title: "Tipo",
+                    field: "lead_type",
+                    headerFilter: true
+                },
+                { 
+                    title: "Flusso",
+                    field: "flow_name",
+                    headerFilter: true
+                },
+                { 
+                    title: "Contatto",
+                    field: "contact_name",
+                    headerFilter: true
+                },
+                { 
+                    title: "Telefono",
+                    field: "contact_phone",
+                    formatter: this.formatPhone.bind(this),
+                    headerFilter: true
+                },
+                {
+                    title: "Stato",
+                    field: "status",
+                    formatter: this.formatLeadStatus.bind(this),
+                    headerFilter: true,
+                    headerFilterParams: {
+                        values: {
+                            "new": "Nuovo",
+                            "processing": "In Lavorazione", 
+                            "completed": "Completato",
+                            "failed": "Fallito"
+                        }
+                    }
+                }
+            ]
+        });
+    }
+
+// Aggiungi questo metodo alla classe BotManager
+
+async loadInitialData() {
+    try {
+        console.log('Loading initial data...');
+        
+        // Carica tabelle disponibili per i flussi
+        const tablesResponse = await this.fetchWithDebug(
+            `${this.config.apiPath}?action=getAvailableTables`
+        );
+        
+        if (tablesResponse.success) {
+            console.log('Tables data loaded successfully');
+            const select = document.getElementById('source-table');
+            if (select) {
+                select.innerHTML = '<option value="">Seleziona tabella...</option>';
+                tablesResponse.data.forEach(table => {
+                    const option = document.createElement('option');
+                    option.value = table.table_name;
+                    option.textContent = table.description || table.table_name;
+                    select.appendChild(option);
+                });
+            }
+        }
+
+        // Carica statistiche della dashboard
+        await this.updateDashboardStats();
+
+        // Carica i dati iniziali per tutte le tabelle
+        await Promise.all([
+            this.tables.flows?.setData(),
+            this.tables.conversations?.setData(),
+            this.tables.leads?.setData()
+        ]);
+
+        console.log('Initial data load completed');
+
+    } catch (error) {
+        console.error('Initial data load failed:', error);
+        this.showError(`Errore durante il caricamento dei dati: ${error.message}`);
+        throw error; // Rilanciamo l'errore per gestirlo nel chiamante
+    }
+}
+
+// Metodo di supporto per aggiornare le statistiche della dashboard
+async updateDashboardStats() {
+    try {
+        const response = await this.fetchWithDebug(
+            `${this.config.apiPath}?action=getDashboardStats`
+        );
+        
+        if (!response.success) {
+            throw new Error('Failed to fetch dashboard stats');
+        }
+
+        const stats = response.data;
+        
+        // Aggiornamento UI
+        document.getElementById('total-conversations').textContent = stats.active_conversations || 0;
+        document.getElementById('total-interactions').textContent = (stats.total_interactions || 0).toLocaleString();
+        document.getElementById('conversion-rate').textContent = `${stats.conversion_rate || 0}%`;
+        document.getElementById('active-leads').textContent = stats.active_leads || 0;
+
+    } catch (error) {
+        console.error('Error updating dashboard stats:', error);
+        // Non lanciamo l'errore qui per evitare di interrompere il caricamento completo
+    }
+}
+  
+
+    initEventListeners() {
+        // Tab navigation
+        document.querySelectorAll('.tab').forEach(tab => {
+            tab.addEventListener('click', () => {
+                const panelId = tab.getAttribute('data-panel');
+                if (panelId) this.showTab(panelId);
+            });
+        });
+
+        // Flow form
+        const flowForm = document.getElementById('flow-form');
+        if (flowForm) {
+            flowForm.addEventListener('submit', (e) => {
+                e.preventDefault();
+                this.submitFlow();
+            });
+        }
+
+        // Source table change
+        const sourceTable = document.getElementById('source-table');
+        if (sourceTable) {
+            sourceTable.addEventListener('change', () => {
+                this.handleTableChange(sourceTable.value);
+            });
+        }
+
+        // Add step button
+        document.querySelector('.add-step')?.addEventListener('click', () => {
+            this.addFlowStep();
+        });
+    }
+
+    async handleTableChange(tableName) {
+        if (!tableName) return;
+
+        try {
+            const response = await this.fetchWithDebug(
+                `${this.config.apiPath}?action=getTableFields&table=${tableName}`
+            );
+
+            if (!response.success) {
+                throw new Error('Error loading table fields');
+            }
+
+            // Populate phone field select
+            const phoneSelect = document.getElementById('phone-field');
+            phoneSelect.innerHTML = '<option value="">Seleziona campo telefono...</option>';
+            
+            response.data.phone_fields.forEach(field => {
+                const option = document.createElement('option');
+                option.value = field;
+                option.textContent = field;
+                phoneSelect.appendChild(option);
+            });
+
+            // Populate placeholders
+            const placeholdersContainer = document.getElementById('available-placeholders');
+            placeholdersContainer.innerHTML = '';
+            
+            response.data.fields.forEach(field => {
+                const placeholder = document.createElement('span');
+                placeholder.className = 'placeholder-tag';
+                placeholder.textContent = `{${field.name}}`;
+                placeholder.onclick = () => this.insertPlaceholder(field.name);
+                placeholdersContainer.appendChild(placeholder);
+            });
+
+        } catch (error) {
+            console.error('Error handling table change:', error);
+            this.showError('Errore nel caricamento dei campi della tabella');
+        }
+    }
+
+    insertPlaceholder(field) {
+        const textarea = document.getElementById('welcome-message');
+        if (!textarea) return;
+
+        const start = textarea.selectionStart;
+        const end = textarea.selectionEnd;
+        const text = textarea.value;
+        const placeholder = `{${field}}`;
+        
+        textarea.value = text.substring(0, start) + placeholder + text.substring(end);
+        const newPosition = start + placeholder.length;
+        textarea.setSelectionRange(newPosition, newPosition);
+        textarea.focus();
+    }
+
+    addFlowStep() {
+        const stepsContainer = document.getElementById('flow-steps');
+        const stepId = `step_${Date.now()}`;
+        
+        const stepHtml = `
+            <div class="flow-step" data-step-id="${stepId}">
+                <div class="step-header">
+                    <span class="step-title">Step ${stepsContainer.children.length + 1}</span>
+                    <button type="button" class="btn-danger remove-step" onclick="window.botManager.removeStep('${stepId}')">
+                        <i class="fas fa-trash"></i>
+                    </button>
+                </div>
+                
+                <div class="form-group">
+                    <label>Tipo Step</label>
+                    <select class="form-input step-type" onchange="window.botManager.updateStepOptions('${stepId}')">
+                        <option value="message">Messaggio</option>
+                        <option value="choice">Scelta</option>
+                        <option value="input">Input</option>
+                        <option value="end">Fine</option>
+                    </select>
+                </div>
+
+                <div class="form-group">
+                    <label>Messaggio</label>
+                    <textarea class="message-editor step-message" required></textarea>
+                </div>
+
+                <div class="step-options"></div>
+            </div>
+        `;
+
+        stepsContainer.insertAdjacentHTML('beforeend', stepHtml);
+        this.updateStepSelects();
+    }
+
+    removeStep(stepId) {
+        const step = document.querySelector(`.flow-step[data-step-id="${stepId}"]`);
+        if (step && confirm('Sei sicuro di voler rimuovere questo step?')) {
+            step.remove();
+            this.updateStepNumbers();
+            this.updateStepSelects();
+        }
+    }
+
+    updateStepNumbers() {
+        document.querySelectorAll('.flow-step').forEach((step, index) => {
+            step.querySelector('.step-title').textContent = `Step ${index + 1}`;
+        });
+    }
+
+    updateStepOptions(stepId) {
+        const step = document.querySelector(`.flow-step[data-step-id="${stepId}"]`);
+        const type = step.querySelector('.step-type').value;
+        const optionsContainer = step.querySelector('.step-options');
+
+        let optionsHtml = '';
+        switch (type) {
+            case 'choice':
+                optionsHtml = `
+                    <div class="form-group">
+                        <label>Genera Lead su risposta positiva</label>
+                        <div class="switch-container">
+                            <input type="checkbox" class="step-generate-lead" onchange="window.botManager.toggleLeadOptions('${stepId}')">
+                        </div>
+                    </div>
+                    <div class="lead-options" style="display: none;">
+                        <div class="form-group">
+                            <label>Tipo Lead</label>
+                            <input type="text" class="form-input step-lead-type" placeholder="es: richiesta_consulenza">
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label>Step successivo (Sì)</label>
+                        <select class="form-input step-yes-next"></select>
+                    </div>
+                    <div class="form-group">
+                        <label>Step successivo (No)</label>
+                        <select class="form-input step-no-next"></select>
+                    </div>
+                `;
+                break;
+
+            case 'input':
+                optionsHtml = `
+                    <div class="form-group">
+                        <label>Nome campo</label>
+                        <input type="text" class="form-input step-save-as" placeholder="es: email">
+                    </div>
+                    <div class="form-group">
+                        <label>Step successivo</label>
+                        <select class="form-input step-next"></select>
+                    </div>
+                `;
+                break;
+        }
+
+        optionsContainer.innerHTML = optionsHtml;
+        this.updateStepSelects();
+    }
+
+    updateStepSelects() {
+        const steps = Array.from(document.querySelectorAll('.flow-step'));
+        const options = steps.map((step, index) => {
+            const stepId = step.dataset.stepId;
+            return `<option value="${stepId}">Step ${index + 1}</option>`;
+        });
+        options.push('<option value="end">Fine conversazione</option>');
+
+        document.querySelectorAll('.step-next, .step-yes-next, .step-no-next').forEach(select => {
+            const currentValue = select.value;
+            select.innerHTML = options.join('');
+            if (currentValue) select.value = currentValue;
+        });
+    }
+
+    toggleLeadOptions(stepId) {
+        const step = document.querySelector(`.flow-step[data-step-id="${stepId}"]`);
+        const generateLead = step.querySelector('.step-generate-lead').checked;
+        const leadOptions = step.querySelector('.lead-options');
+        leadOptions.style.display = generateLead ? 'block' : 'none';
+    }
+
+    async submitFlow() {
+        if (this.isSubmitting) return;
+    
+        try {
+            this.isSubmitting = true;
+    
+            // Validate basic fields
+            const name = document.getElementById('flow-name').value;
+            const sourceTable = document.getElementById('source-table').value;
+            const phoneField = document.getElementById('phone-field').value;
+            const welcomeMessage = document.getElementById('welcome-message').value;
+    
+            if (!name || !sourceTable || !phoneField || !welcomeMessage) {
+                throw new Error('Tutti i campi sono obbligatori');
+            }
+    
+            // Build flow steps
+            const steps = [];
+            document.querySelectorAll('.flow-step').forEach((stepEl, index) => {
+                const stepId = stepEl.dataset.stepId;
+                const type = stepEl.querySelector('.step-type').value;
+                const message = stepEl.querySelector('.step-message').value;
+    
+                const step = {
+                    id: stepId,
+                    type,
+                    message
+                };
+    
+                switch (type) {
+                    case 'choice':
+                        const generateLead = stepEl.querySelector('.step-generate-lead')?.checked;
+                        if (generateLead) {
+                            step.generate_lead = true;
+                            step.lead_type = stepEl.querySelector('.step-lead-type').value;
+                        }
+                        step.yes_step = stepEl.querySelector('.step-yes-next').value;
+                        step.no_step = stepEl.querySelector('.step-no-next').value;
+                        break;
+    
+                    case 'input':
+                        step.save_as = stepEl.querySelector('.step-save-as').value;
+                        step.next_step = stepEl.querySelector('.step-next').value;
+                        break;
+                }
+    
+                steps.push(step);
+            });
+    
+            if (steps.length === 0) {
+                throw new Error('Aggiungi almeno uno step al flusso');
+            }
+    
+            // Prepare request payload
+            const requestPayload = {
+                name,
+                source_table: sourceTable,
+                phone_field: phoneField,
+                welcome_message: welcomeMessage,
+                flow_data: { steps }
+            };
+    
+            // Add ID if updating
+            if (this.selectedFlow) {
+                requestPayload.id = this.selectedFlow.id;
+            }
+    
+            // Create URL with action parameter
+            const action = this.selectedFlow ? 'updateFlow' : 'createFlow';
+            const url = `${this.config.apiPath}?action=${action}`;
+    
+            // Submit to server
+            const response = await this.fetchWithDebug(
+                url,
+                {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(requestPayload)
+                }
+            );
+    
+            if (!response.success) {
+                throw new Error(response.error || 'Errore nel salvataggio del flusso');
+            }
+    
+            this.showSuccess(this.selectedFlow ? 'Flusso aggiornato con successo' : 'Flusso creato con successo');
+            this.closePanel('flow-editor-panel');
+            this.selectedFlow = null;
+            await this.refreshData();
+    
+        } catch (error) {
+            console.error('Error submitting flow:', error);
+            this.showError(error.message);
+        } finally {
+            this.isSubmitting = false;
+        }
+    }
+
+    async viewConversation(conversationId) {
+        try {
+            const response = await this.fetchWithDebug(
+                `${this.config.apiPath}?action=getConversationDetails&id=${conversationId}`
+            );
+
+            if (!response.success) {
+                throw new Error('Errore nel caricamento della conversazione');
+            }
+
+            const {conversation, messages} = response.data;
+
+            // Popola info contatto
+            const contactInfo = document.getElementById('contact-info');
+            contactInfo.innerHTML = `
+                <div class="info-row">
+                    <span class="info-label">Nome:</span>
+                    <span class="info-value">${conversation.contact_name || 'N/D'}</span>
+                </div>
+                <div class="info-row">
+                    <span class="info-label">Telefono:</span>
+                    <span class="info-value">${this.formatPhone(conversation.contact_phone)}</span>
+                </div>
+            `;
+
+            // Popola info flusso
+            const flowInfo = document.getElementById('flow-info');
+            flowInfo.innerHTML = `
+                <div class="info-row">
+                    <span class="info-label">Nome:</span>
+                    <span class="info-value">${conversation.flow_name}</span>
+                </div>
+                <div class="info-row">
+                    <span class="info-label">Stato:</span>
+                    <span class="info-value">${
+                        conversation.is_completed ? 
+                        '<span class="status-badge success">Completata</span>' : 
+                        '<span class="status-badge warning">In corso</span>'
+                    }</span>
+                </div>
+                ${conversation.current_step ? `
+                    <div class="info-row">
+                        <span class="info-label">Step corrente:</span>
+                        <span class="info-value">${conversation.current_step}</span>
+                    </div>
+                ` : ''}
+            `;
+
+            // Popola timeline messaggi
+            const timeline = document.querySelector('.message-timeline');
+            timeline.innerHTML = messages.map(msg => this.renderMessage(msg)).join('');
+
+            // Mostra pannello
+            this.showPanel('conversation-detail-panel');
+
+        } catch (error) {
+            console.error('Error viewing conversation:', error);
+            this.showError('Errore nella visualizzazione della conversazione');
+        }
+    }
+
+    renderMessage(msg) {
+        const time = new Date(msg.sent_at).toLocaleTimeString('it-IT');
+        const isOutgoing = msg.direction === 'outgoing';
+        
+        return `
+            <div class="message ${isOutgoing ? 'outgoing' : 'incoming'}">
+                <div class="message-time">${time}</div>
+                <div class="message-content">
+                    ${this.renderMessageContent(msg)}
+                </div>
+                ${msg.metadata ? `
+                    <div class="message-metadata">
+                        ${this.renderMessageMetadata(msg.metadata)}
+                    </div>
+                ` : ''}
+            </div>
+        `;
+    }
+    async checkAuthentication() {
+        try {
+            const response = await this.fetchWithDebug(
+                `${this.config.apiPath}?action=checkAuth`
+            );
+            return response.success;
+        } catch (error) {
+            console.error('Authentication check failed:', error);
+            return false;
+        }
+    }
+    renderMessageContent(msg) {
+        switch (msg.message_type) {
+            case 'text':
+                return this.escapeHtml(msg.content);
+                
+            case 'image':
+                return `
+                    <div class="message-media">
+                        <img src="${msg.media_url}" alt="Immagine" class="message-image">
+                        ${msg.content ? `<div class="media-caption">${this.escapeHtml(msg.content)}</div>` : ''}
+                    </div>`;
+                
+            case 'document':
+                return `
+                    <div class="message-document">
+                        <i class="fas fa-file-${this.getFileIcon(msg.media_name)}"></i>
+                        <span>${this.escapeHtml(msg.media_name)}</span>
+                        <a href="${msg.media_url}" target="_blank" class="download-link">
+                            <i class="fas fa-download"></i>
+                        </a>
+                    </div>`;
+                
+            default:
+                return '<div class="message-unsupported">Tipo messaggio non supportato</div>';
+        }
+    }
+
+    renderMessageMetadata(metadata) {
+        if (typeof metadata === 'string') {
+            try {
+                metadata = JSON.parse(metadata);
+            } catch (e) {
+                return '';
+            }
+        }
+
+        const relevantFields = ['status', 'timestamp', 'error'];
+        const html = [];
+
+        for (const field of relevantFields) {
+            if (metadata[field]) {
+                html.push(`
+                    <div class="metadata-row">
+                        <span class="metadata-label">${field}:</span>
+                        <span class="metadata-value">${this.escapeHtml(metadata[field])}</span>
+                    </div>
+                `);
+            }
+        }
+
+        return html.join('');
+    }
+
+    getFileIcon(filename) {
+        const ext = filename.split('.').pop().toLowerCase();
+        const iconMap = {
+            'pdf': 'pdf',
+            'doc': 'word',
+            'docx': 'word',
+            'xls': 'excel',
+            'xlsx': 'excel',
+            'ppt': 'powerpoint',
+            'pptx': 'powerpoint',
+            'txt': 'text',
+            'zip': 'archive',
+            'rar': 'archive'
+        };
+        return iconMap[ext] || 'alt';
+    }
+
+    escapeHtml(text) {
+        const div = document.createElement('div');
+        div.textContent = text;
+        return div.innerHTML;
+    }
+
+    async refreshData() {
+        try {
+            await Promise.all([
+                this.tables.flows?.replaceData(),
+                this.tables.conversations?.replaceData(),
+                this.tables.leads?.replaceData(),
+                this.updateDashboardStats()
+            ]);
+        } catch (error) {
+            console.error('Error refreshing data:', error);
+            this.showError('Errore nell\'aggiornamento dei dati');
+        }
+    }
+
+    async updateDashboardStats() {
+        try {
+            const response = await this.fetchWithDebug(`${this.config.apiPath}?action=getDashboardStats`);
+            
+            if (response.success) {
+                const stats = response.data;
+                
+                document.getElementById('total-conversations').textContent = stats.active_conversations;
+                document.getElementById('total-interactions').textContent = stats.total_interactions.toLocaleString();
+                document.getElementById('conversion-rate').textContent = `${stats.conversion_rate}%`;
+                document.getElementById('active-leads').textContent = stats.active_leads;
+            }
+        } catch (error) {
+            console.error('Error updating dashboard stats:', error);
+        }
+    }
+
+    setupAutoRefresh() {
+        setInterval(() => {
+            this.refreshData();
+        }, 30000); // Aggiorna ogni 30 secondi
+    }
+
+    // Utility methods
+    showPanel(panelId) {
+        document.querySelectorAll('.sliding-panel').forEach(panel => {
+            panel.classList.remove('active');
+        });
+        
+        const panel = document.getElementById(panelId);
+        if (panel) {
+            document.querySelector('.panel-overlay')?.classList.add('active');
+            panel.classList.add('active');
+        }
+    }
+
+    closePanel(panelId) {
+        const panel = document.getElementById(panelId);
+        if (panel) {
+            panel.classList.remove('active');
+            document.querySelector('.panel-overlay')?.classList.remove('active');
+        }
+    }
+
+    formatDateTime(cell) {
+        const date = new Date(cell.getValue());
+        return date.toLocaleString('it-IT');
+    }
+
+    formatPhone(phone) {
+        if (!phone) return 'N/D';
+        
+        let cleaned = String(phone).replace(/\D/g, '');
+        if (cleaned.startsWith('39') && cleaned.length > 10) {
+            cleaned = cleaned.substring(2);
+        }
+        return cleaned.replace(/(\d{3})(\d{3})(\d{4})/, '+39 $1 $2 $3');
+    }
+
+    showNotification(type, message) {
+        const container = document.querySelector('.notification-container') || 
+            (() => {
+                const cont = document.createElement('div');
+                cont.className = 'notification-container';
+                document.body.appendChild(cont);
+                return cont;
+            })();
+
+        const toast = document.createElement('div');
+        toast.className = `notification-toast ${type}`;
+        
+        const icon = document.createElement('i');
+        icon.className = `fas fa-${type === 'success' ? 'check-circle' : 'exclamation-circle'}`;
+        
+        const messageDiv = document.createElement('div');
+        messageDiv.className = 'message';
+        messageDiv.textContent = message;
+        
+        toast.appendChild(icon);
+        toast.appendChild(messageDiv);
+        container.appendChild(toast);
+
+        setTimeout(() => {
+            toast.remove();
+            if (!container.children.length) {
+                container.remove();
+            }
+        }, 3000);
+    }
+
+    showSuccess(message) {
+        this.showNotification('success', message);
+    }
+
+    showError(message) {
+        this.showNotification('error', message);
+    }
+
+    async fetchWithDebug(url, options = {}) {
+        try {
+            if (this.config.debug) {
+                console.group('API Request');
+                console.log('URL:', url);
+                console.log('Options:', JSON.stringify(options, null, 2));
+                console.groupEnd();
+            }
+    
+            // Ensure content type is set for POST requests
+            if (options.method === 'POST') {
+                options.headers = {
+                    ...options.headers,
+                    'Content-Type': 'application/json'
+                };
+            }
+    
+            const response = await fetch(url, options);
+            const data = await response.json();
+    
+            if (this.config.debug) {
+                console.group('API Response');
+                console.log('Status:', response.status);
+                console.log('Data:', data);
+                console.groupEnd();
+            }
+    
+            if (!response.ok) {
+                throw new Error(data.error || `HTTP error! status: ${response.status}`);
+            }
+    
+            return data;
+    
+        } catch (error) {
+            console.error('Fetch error:', error);
+            throw error;
+        }
+    }
+}
+### Contenuto di ../backend/b_bot.php ###
+
+<?php
+// Includi solo head.php che gestisce già l'autenticazione
+require_once '../common/head.php';
+
+header('Content-Type: application/json');
+
+try {
+    if (!isset($_GET['action'])) {
+        throw new Exception('Azione non specificata');
+    }
+
+    $action = $_GET['action'];
+    $result = null;
+
+    // Carica configurazione
+    $domainParts = explode('.', $_SERVER['HTTP_HOST']);
+    $thirdLevelDomain = $domainParts[0];
+    $config = parse_ini_file("../config/{$thirdLevelDomain}/config.ini", true);
+
+    if (!isset($_GET['action'])) {
+        throw new Exception('Azione non specificata');
+    }
+
+    $pdo = new PDO(
+        "mysql:host={$config['database']['host']};dbname={$config['database']['dbname']};charset=utf8mb4",
+        $config['database']['username'],
+        $config['database']['password'],
+        [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION]
+    );
+
+    $action = $_GET['action'];
+    $result = null;
+
+    switch ($action) {
+        case 'getAvailableTables':
+            $stmt = $pdo->prepare("SELECT id, table_name, description FROM t_table ORDER BY description");
+            $stmt->execute();
+            $result = [
+                'success' => true,
+                'data' => $stmt->fetchAll(PDO::FETCH_ASSOC)
+            ];
+            break;
+
+            case 'getCurrentUser':
+                if (!isset($_SESSION['user']) || !$_SESSION['user']['logged_in']) {
+                    echo json_encode([
+                        'success' => false,
+                        'error' => 'User not authenticated'
+                    ]);
+                    exit;
+                }
+                
+                echo json_encode([
+                    'success' => true,
+                    'data' => [
+                        'id' => $_SESSION['user']['id'],
+                        'username' => $_SESSION['user']['username']
+                    ]
+                ]);
+                break;
+
+            case 'getDashboardStats':
+                $result = handleGetDashboardStats($pdo);
+                break;
+
+        case 'getTableFields':
+            if (!isset($_GET['table'])) {
+                throw new Exception('Nome tabella mancante');
+            }
+
+            $tableName = $_GET['table'];
+            
+            // Verifica esistenza tabella
+            $stmt = $pdo->prepare("SELECT id FROM t_table WHERE table_name = ?");
+            $stmt->execute([$tableName]);
+            if (!$stmt->fetch()) {
+                throw new Exception('Tabella non valida');
+            }
+
+            // Ottieni struttura tabella
+            $query = "SHOW COLUMNS FROM `" . str_replace('`', '', $tableName) . "`";
+            $stmt = $pdo->query($query);
+            $columns = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+            $fields = [];
+            $phoneFields = [];
+            
+            foreach ($columns as $column) {
+                $fieldName = $column['Field'];
+                $isPhone = preg_match('/(phone|telefono|cellulare|mobile|tel)/i', $fieldName);
+                
+                $fields[] = [
+                    'name' => $fieldName,
+                    'type' => $column['Type'],
+                    'is_phone' => $isPhone
+                ];
+                
+                if ($isPhone) {
+                    $phoneFields[] = $fieldName;
+                }
+            }
+
+            $result = [
+                'success' => true,
+                'data' => [
+                    'fields' => $fields,
+                    'phone_fields' => $phoneFields
+                ]
+            ];
+            break;
+                case 'createFlow':
+                    $data = json_decode(file_get_contents('php://input'), true);
+                    
+                    if (!isset($data['name']) || !isset($data['source_table']) || 
+                        !isset($data['phone_field']) || !isset($data['welcome_message']) ||
+                        !isset($data['flow_data'])) {
+                        throw new Exception('Dati mancanti');
+                    }
+        
+                    $stmt = $pdo->prepare("
+                        INSERT INTO t_bot_flows (
+                            name, 
+                            source_table,
+                            phone_field,
+                            welcome_message,
+                            flow_data,
+                            created_by,
+                            is_active
+                        ) VALUES (?, ?, ?, ?, ?, ?, TRUE)
+                    ");
+                    
+                    $stmt->execute([
+                        $data['name'],
+                        $data['source_table'],
+                        $data['phone_field'],
+                        $data['welcome_message'],
+                        json_encode($data['flow_data']),
+                        $_SESSION['user']['id']
+                    ]);
+        
+                    $result = [
+                        'success' => true,
+                        'id' => $pdo->lastInsertId()
+                    ];
+                    break;
+                case 'checkAuth':
+                    echo json_encode([
+                        'success' => isset($_SESSION['user']) && $_SESSION['user']['logged_in'],
+                        'data' => isset($_SESSION['user']) ? [
+                            'username' => $_SESSION['user']['username'],
+                            'id' => $_SESSION['user']['id']
+                        ] : null
+                    ]);
+                    break;
+        case 'updateFlow':
+            $data = json_decode(file_get_contents('php://input'), true);
+            
+            if (!isset($data['id'])) {
+                throw new Exception('ID flusso mancante');
+            }
+
+            $stmt = $pdo->prepare("
+                UPDATE t_bot_flows SET
+                    name = ?,
+                    source_table = ?,
+                    phone_field = ?,
+                    welcome_message = ?,
+                    flow_data = ?,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+            ");
+            
+            $stmt->execute([
+                $data['name'],
+                $data['source_table'],
+                $data['phone_field'],
+                $data['welcome_message'],
+                json_encode($data['flow_data']),
+                $data['id']
+            ]);
+
+            $result = [
+                'success' => true
+            ];
+            break;
+
+        case 'getFlows':
+            $stmt = $pdo->query("
+                SELECT 
+                    f.*,
+                    COUNT(DISTINCT c.id) as total_conversations,
+                    COUNT(DISTINCT CASE WHEN c.is_completed THEN c.id END) as completed_conversations,
+                    COUNT(DISTINCT l.id) as total_leads
+                FROM t_bot_flows f
+                LEFT JOIN t_bot_conversations c ON f.id = c.flow_id
+                LEFT JOIN t_bot_leads l ON f.id = l.flow_id
+                GROUP BY f.id
+                ORDER BY f.created_at DESC
+            ");
+
+            $result = [
+                'success' => true,
+                'data' => $stmt->fetchAll(PDO::FETCH_ASSOC)
+            ];
+            break;
+
+        case 'getFlow':
+            if (!isset($_GET['id'])) {
+                throw new Exception('ID flusso mancante');
+            }
+
+            $stmt = $pdo->prepare("SELECT * FROM t_bot_flows WHERE id = ?");
+            $stmt->execute([$_GET['id']]);
+            $flow = $stmt->fetch(PDO::FETCH_ASSOC);
+
+            if (!$flow) {
+                throw new Exception('Flusso non trovato');
+            }
+
+            $result = [
+                'success' => true,
+                'data' => $flow
+            ];
+            break;
+
+        case 'toggleFlow':
+            $data = json_decode(file_get_contents('php://input'), true);
+            
+            if (!isset($data['id'])) {
+                throw new Exception('ID flusso mancante');
+            }
+
+            $stmt = $pdo->prepare("
+                UPDATE t_bot_flows SET
+                    is_active = NOT is_active,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+            ");
+            
+            $stmt->execute([$data['id']]);
+
+            $result = [
+                'success' => true
+            ];
+            break;
+
+        case 'deleteFlow':
+            if (!isset($_GET['id'])) {
+                throw new Exception('ID flusso mancante');
+            }
+
+            $pdo->beginTransaction();
+
+            try {
+                // Delete related leads
+                $stmt = $pdo->prepare("DELETE FROM t_bot_leads WHERE flow_id = ?");
+                $stmt->execute([$_GET['id']]);
+
+                // Delete related messages and conversations
+                $stmt = $pdo->prepare("
+                    DELETE m FROM t_bot_messages m
+                    INNER JOIN t_bot_conversations c ON m.conversation_id = c.id
+                    WHERE c.flow_id = ?
+                ");
+                $stmt->execute([$_GET['id']]);
+
+                $stmt = $pdo->prepare("DELETE FROM t_bot_conversations WHERE flow_id = ?");
+                $stmt->execute([$_GET['id']]);
+
+                // Finally delete the flow
+                $stmt = $pdo->prepare("DELETE FROM t_bot_flows WHERE id = ?");
+                $stmt->execute([$_GET['id']]);
+
+                $pdo->commit();
+                $result = ['success' => true];
+
+            } catch (Exception $e) {
+                $pdo->rollBack();
+                throw $e;
+            }
+            break;
+
+        case 'getConversations':
+            $stmt = $pdo->query("
+                SELECT 
+                    c.*,
+                    f.name as flow_name,
+                    COUNT(m.id) as messages_count,
+                    EXISTS(SELECT 1 FROM t_bot_leads l WHERE l.conversation_id = c.id) as has_lead
+                FROM t_bot_conversations c
+                INNER JOIN t_bot_flows f ON c.flow_id = f.id
+                LEFT JOIN t_bot_messages m ON c.id = m.conversation_id
+                GROUP BY c.id
+                ORDER BY c.last_interaction_at DESC
+            ");
+
+            $result = [
+                'success' => true,
+                'data' => $stmt->fetchAll(PDO::FETCH_ASSOC)
+            ];
+            break;
+
+        case 'getConversationDetails':
+            if (!isset($_GET['id'])) {
+                throw new Exception('ID conversazione mancante');
+            }
+
+            // Get conversation details
+            $stmt = $pdo->prepare("
+                SELECT 
+                    c.*,
+                    f.name as flow_name,
+                    f.flow_data,
+                    l.id as lead_id,
+                    l.lead_type,
+                    l.lead_data,
+                    l.status as lead_status
+                FROM t_bot_conversations c
+                INNER JOIN t_bot_flows f ON c.flow_id = f.id
+                LEFT JOIN t_bot_leads l ON c.id = l.conversation_id
+                WHERE c.id = ?
+            ");
+            $stmt->execute([$_GET['id']]);
+            $conversation = $stmt->fetch(PDO::FETCH_ASSOC);
+
+            if (!$conversation) {
+                throw new Exception('Conversazione non trovata');
+            }
+
+            // Get messages
+            $stmt = $pdo->prepare("
+                SELECT *
+                FROM t_bot_messages
+                WHERE conversation_id = ?
+                ORDER BY sent_at ASC
+            ");
+            $stmt->execute([$_GET['id']]);
+            $messages = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+            $result = [
+                'success' => true,
+                'data' => [
+                    'conversation' => $conversation,
+                    'messages' => $messages
+                ]
+            ];
+            break;
+
+        case 'getLeads':
+            $stmt = $pdo->query("
+                SELECT 
+                    l.*,
+                    f.name as flow_name,
+                    c.started_at as conversation_start,
+                    c.last_interaction_at
+                FROM t_bot_leads l
+                INNER JOIN t_bot_flows f ON l.flow_id = f.id
+                INNER JOIN t_bot_conversations c ON l.conversation_id = c.id
+                ORDER BY l.created_at DESC
+            ");
+
+            $result = [
+                'success' => true,
+                'data' => $stmt->fetchAll(PDO::FETCH_ASSOC)
+            ];
+            break;
+
+        case 'handleIncomingMessage':
+            $data = json_decode(file_get_contents('php://input'), true);
+            
+            if (!isset($data['phone']) || !isset($data['message'])) {
+                throw new Exception('Dati messaggio mancanti');
+            }
+
+            $phone = $data['phone'];
+            $message = $data['message'];
+
+            // Find active conversation or create new one
+            $stmt = $pdo->prepare("
+                SELECT c.*, f.flow_data, f.welcome_message
+                FROM t_bot_conversations c
+                INNER JOIN t_bot_flows f ON c.flow_id = f.id
+                WHERE c.contact_phone = ? AND NOT c.is_completed
+                ORDER BY c.last_interaction_at DESC
+                LIMIT 1
+            ");
+            $stmt->execute([$phone]);
+            $conversation = $stmt->fetch(PDO::FETCH_ASSOC);
+
+            $pdo->beginTransaction();
+
+            try {
+                if (!$conversation) {
+                    // Find matching flow
+                    $stmt = $pdo->prepare("
+                        SELECT f.*, t.*
+                        FROM t_bot_flows f
+                        INNER JOIN t_table t ON f.source_table = t.table_name
+                        WHERE f.is_active = TRUE
+                        ORDER BY f.created_at DESC
+                        LIMIT 1
+                    ");
+                    $stmt->execute();
+                    $flow = $stmt->fetch(PDO::FETCH_ASSOC);
+
+                    if (!$flow) {
+                        throw new Exception('Nessun flusso attivo trovato');
+                    }
+
+                    // Check if phone exists in source table
+                    $query = "SELECT * FROM `" . $flow['source_table'] . "` WHERE `" . $flow['phone_field'] . "` = ?";
+                    $stmt = $pdo->prepare($query);
+                    $stmt->execute([$phone]);
+                    $contact = $stmt->fetch(PDO::FETCH_ASSOC);
+
+                    if (!$contact) {
+                        throw new Exception('Contatto non trovato nella tabella origine');
+                    }
+
+                    // Create new conversation
+                    $stmt = $pdo->prepare("
+                        INSERT INTO t_bot_conversations (
+                            flow_id,
+                            contact_phone,
+                            contact_name,
+                            current_step,
+                            state
+                        ) VALUES (?, ?, ?, 'welcome', '{}')
+                    ");
+                    $stmt->execute([
+                        $flow['id'],
+                        $phone,
+                        $contact['nome'] ?? $contact['ragione_sociale'] ?? $contact['denominazione'] ?? null
+                    ]);
+
+                    $conversationId = $pdo->lastInsertId();
+
+                    // Store incoming message
+                    $stmt = $pdo->prepare("
+                        INSERT INTO t_bot_messages (
+                            conversation_id,
+                            direction,
+                            content
+                        ) VALUES (?, 'incoming', ?)
+                    ");
+                    $stmt->execute([$conversationId, $message]);
+
+                    // Send welcome message
+                    $welcomeMessage = $this->replacePlaceholders($flow['welcome_message'], $contact);
+                    
+                    $stmt = $pdo->prepare("
+                        INSERT INTO t_bot_messages (
+                            conversation_id,
+                            direction,
+                            content
+                        ) VALUES (?, 'outgoing', ?)
+                    ");
+                    $stmt->execute([$conversationId, $welcomeMessage]);
+
+                    // Call UltraMsg API to send welcome message
+                    $this->sendUltraMsg($config, $phone, $welcomeMessage);
+
+                } else {
+                    // Store incoming message
+                    $stmt = $pdo->prepare("
+                        INSERT INTO t_bot_messages (
+                            conversation_id,
+                            direction,
+                            content
+                        ) VALUES (?, 'incoming', ?)
+                    ");
+                    $stmt->execute([$conversation['id'], $message]);
+
+                    // Process message based on current step
+                    $flowData = json_decode($conversation['flow_data'], true);
+                    $currentStep = $conversation['current_step'];
+                    $state = json_decode($conversation['state'], true);
+
+                    $response = $this->processStep(
+                        $message,
+                        $currentStep,
+                        $flowData,
+                        $state,
+                        $conversation['id'],
+                        $pdo,
+                        $config
+                    );
+
+                    // Update conversation state
+                    $stmt = $pdo->prepare("
+                        UPDATE t_bot_conversations SET
+                            current_step = ?,
+                            state = ?,
+                            last_interaction_at = CURRENT_TIMESTAMP,
+                            is_completed = ?
+                        WHERE id = ?
+                    ");
+                    $stmt->execute([
+                        $response['next_step'],
+                        json_encode($response['state']),
+                        $response['completed'] ?? false,
+                        $conversation['id']
+                    ]);
+
+                    // Store response message
+                    if (isset($response['message'])) {
+                        $stmt = $pdo->prepare("
+                            INSERT INTO t_bot_messages (
+                                conversation_id,
+                                direction,
+                                content
+                            ) VALUES (?, 'outgoing', ?)
+                        ");
+                        $stmt->execute([$conversation['id'], $response['message']]);
+
+                        // Send response via UltraMsg
+                        $this->sendUltraMsg($config, $phone, $response['message']);
+                    }
+
+                    // Handle lead creation if needed
+                    if (isset($response['lead'])) {
+                        $stmt = $pdo->prepare("
+                            INSERT INTO t_bot_leads (
+                                conversation_id,
+                                flow_id,
+                                contact_phone,
+                                contact_name,
+                                lead_type,
+                                lead_data
+                            ) VALUES (?, ?, ?, ?, ?, ?)
+                        ");
+                        $stmt->execute([
+                            $conversation['id'],
+                            $conversation['flow_id'],
+                            $phone,
+                            $conversation['contact_name'],
+                            $response['lead']['type'],
+                            json_encode($response['lead']['data'])
+                        ]);
+                    }
+                }
+
+                $pdo->commit();
+                $result = ['success' => true];
+
+            } catch (Exception $e) {
+                $pdo->rollBack();
+                throw $e;
+            }
+            break;
+
+        default:
+            throw new Exception('Azione non valida');
+    }
+
+    echo json_encode($result);
+
+} catch (Exception $e) {
+    http_response_code(500);
+    echo json_encode([
+        'success' => false,
+        'error' => $e->getMessage()
+    ]);
+}
+
+// Helper functions
+function replacePlaceholders($text, $data) {
+    return preg_replace_callback(
+        '/\{([^}]+)\}/',
+        function($matches) use ($data) {
+            return $data[$matches[1]] ?? $matches[0];
+        },
+        $text
+    );
+}
+
+function processStep($message, $currentStep, $flowData, $state, $conversationId, $pdo, $config) {
+    // Process initial greeting
+    if ($currentStep === 'welcome') {
+        $firstStep = $flowData['steps'][0];
+        return [
+            'next_step' => $firstStep['id'],
+            'state' => $state,
+            'message' => $firstStep['message']
+        ];
+    }
+
+    // Find current step in flow
+    $step = null;
+    foreach ($flowData['steps'] as $s) {
+        if ($s['id'] === $currentStep) {
+            $step = $s;
+            break;
+        }
+    }
+
+    if (!$step) {
+        throw new Exception('Step non trovato nel flusso');
+    }
+
+    // Analizza la risposta dell'utente
+    $response = analyzeResponse($message, $step, $state, $config);
+    
+    // Determina il prossimo step basato sulla risposta
+    $nextStep = null;
+    $leadData = null;
+    
+    switch ($step['type']) {
+        case 'choice':
+            if ($response['intent'] === 'affirmative') {
+                $nextStep = $step['yes_step'];
+                if (isset($step['generate_lead']) && $step['generate_lead']) {
+                    $leadData = [
+                        'type' => $step['lead_type'],
+                        'data' => [
+                            'step' => $currentStep,
+                            'response' => $message,
+                            'intent' => 'affirmative'
+                        ]
+                    ];
+                }
+            } else {
+                $nextStep = $step['no_step'];
+            }
+            break;
+
+        case 'input':
+            $state[$step['save_as']] = $message;
+            $nextStep = $step['next_step'];
+            break;
+
+        case 'end':
+            return [
+                'next_step' => $currentStep,
+                'state' => $state,
+                'completed' => true
+            ];
+    }
+
+    // Trova il prossimo step nei dati del flusso
+    $nextStepData = null;
+    foreach ($flowData['steps'] as $s) {
+        if ($s['id'] === $nextStep) {
+            $nextStepData = $s;
+            break;
+        }
+    }
+
+    if (!$nextStepData) {
+        throw new Exception('Step successivo non trovato');
+    }
+
+    // Prepara il messaggio di risposta
+    $responseMessage = replacePlaceholders($nextStepData['message'], $state);
+
+    $result = [
+        'next_step' => $nextStep,
+        'state' => $state,
+        'message' => $responseMessage
+    ];
+
+    if ($leadData) {
+        $result['lead'] = $leadData;
+    }
+
+    return $result;
+}
+
+function analyzeResponse($message, $step, $state, $config) {
+    // Prepara il prompt per Claude
+    $prompt = "Analizza la seguente risposta dell'utente nel contesto di un chatbot:\n\n";
+    $prompt .= "Messaggio utente: " . $message . "\n\n";
+    $prompt .= "Contesto dello step corrente: " . $step['message'] . "\n\n";
+    
+    if ($step['type'] === 'choice') {
+        $prompt .= "Questo è uno step di scelta binaria (sì/no). ";
+        $prompt .= "Determina se la risposta dell'utente esprime un'intenzione affermativa o negativa.\n";
+        $prompt .= "Considera il contesto culturale italiano e le varie forme colloquiali di esprimere accordo o disaccordo.\n";
+    }
+
+    $prompt .= "\nFornisci una risposta in formato JSON con i seguenti campi:\n";
+    $prompt .= "- intent: 'affirmative', 'negative', o 'unclear' per step di scelta\n";
+    $prompt .= "- confidence: un valore da 0 a 1 che indica la confidenza nell'interpretazione\n";
+    $prompt .= "- extracted_data: eventuali dati rilevanti estratti dal messaggio\n";
+
+    // Chiamata API Claude
+    $ch = curl_init('https://api.anthropic.com/v1/messages');
+    curl_setopt_array($ch, [
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_POST => true,
+        CURLOPT_HTTPHEADER => [
+            'Content-Type: application/json',
+            'anthropic-version: 2023-06-01',
+            'x-api-key: ' . $config['claude']['api_key']
+        ],
+        CURLOPT_POSTFIELDS => json_encode([
+            'model' => 'claude-3-sonnet-20240229',
+            'messages' => [
+                [
+                    'role' => 'user',
+                    'content' => $prompt
+                ]
+            ],
+            'max_tokens' => 1024,
+            'temperature' => 0.7
+        ])
+    ]);
+
+    $response = curl_exec($ch);
+    $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    
+    if ($httpCode !== 200) {
+        error_log("Errore API Claude: " . $response);
+        // Fallback a analisi semplice in caso di errore
+        return analyzeResponseSimple($message);
+    }
+
+    $result = json_decode($response, true);
+    if (!$result || !isset($result['content'][0]['text'])) {
+        error_log("Risposta API non valida: " . $response);
+        return analyzeResponseSimple($message);
+    }
+
+    try {
+        $analysis = json_decode($result['content'][0]['text'], true);
+        if (json_last_error() !== JSON_ERROR_NONE) {
+            return analyzeResponseSimple($message);
+        }
+        return $analysis;
+    } catch (Exception $e) {
+        error_log("Errore parsing risposta Claude: " . $e->getMessage());
+        return analyzeResponseSimple($message);
+    }
+}
+
+function analyzeResponseSimple($message) {
+    // Analisi semplice di fallback
+    $affirmativePatterns = [
+        '/\b(s[iì]|ok|certo|esatto|perfetto|giusto|procedi|vai|prosegui)\b/i',
+        '/\b(sono|mi)\s+interess[aio]/i',
+        '/\b(lo\s+)?voglio\b/i'
+    ];
+
+    $negativePatterns = [
+        '/\b(no|non|nope|nah)\b/i',
+        '/\b(non\s+(?:mi\s+)?interessa)\b/i',
+        '/\bno\s+grazie\b/i'
+    ];
+
+    foreach ($affirmativePatterns as $pattern) {
+        if (preg_match($pattern, $message)) {
+            return [
+                'intent' => 'affirmative',
+                'confidence' => 0.8,
+                'extracted_data' => null
+            ];
+        }
+    }
+
+    foreach ($negativePatterns as $pattern) {
+        if (preg_match($pattern, $message)) {
+            return [
+                'intent' => 'negative',
+                'confidence' => 0.8,
+                'extracted_data' => null
+            ];
+        }
+    }
+
+    return [
+        'intent' => 'unclear',
+        'confidence' => 0.5,
+        'extracted_data' => null
+    ];
+}
+function handleGetDashboardStats($pdo) {
+    try {
+        // Query per ottenere le statistiche
+        $stmt = $pdo->prepare("
+            SELECT 
+                (SELECT COUNT(*) 
+                 FROM t_bot_conversations 
+                 WHERE is_completed = 0) as active_conversations,
+                
+                (SELECT COUNT(*) 
+                 FROM t_bot_messages) as total_interactions,
+                
+                (SELECT COUNT(*) 
+                 FROM t_bot_leads 
+                 WHERE status = 'new') as active_leads,
+                
+                (SELECT 
+                    COALESCE(
+                        ROUND(
+                            (COUNT(DISTINCT l.id) * 100.0) / NULLIF(COUNT(DISTINCT c.id), 0)
+                        , 1),
+                        0
+                    )
+                 FROM t_bot_conversations c
+                 LEFT JOIN t_bot_leads l ON c.id = l.conversation_id) as conversion_rate
+            FROM dual
+        ");
+        
+        $stmt->execute();
+        $stats = $stmt->fetch(PDO::FETCH_ASSOC);
+
+        return [
+            'success' => true,
+            'data' => [
+                'active_conversations' => (int)$stats['active_conversations'],
+                'total_interactions' => (int)$stats['total_interactions'],
+                'active_leads' => (int)$stats['active_leads'],
+                'conversion_rate' => (float)$stats['conversion_rate']
+            ]
+        ];
+
+    } catch (Exception $e) {
+        throw new Exception('Error retrieving dashboard stats: ' . $e->getMessage());
+    }
+}
+
+function sendUltraMsg($config, $phone, $message) {
+    if (!isset($config['ultraMsg'])) {
+        throw new Exception('Configurazione UltraMsg mancante');
+    }
+
+    $phone = preg_replace('/[^0-9+]/', '', $phone);
+    if (!preg_match('/^\+?[0-9]{10,15}$/', $phone)) {
+        throw new Exception('Numero di telefono non valido');
+    }
+
+    if (!str_starts_with($phone, '+')) {
+        $phone = '+39' . $phone;
+    }
+
+    $instance = $config['ultraMsg']['instance'];
+    $token = $config['ultraMsg']['token'];
+
+    $ch = curl_init("https://api.ultramsg.com/{$instance}/messages/chat");
+    curl_setopt_array($ch, [
+        CURLOPT_POST => true,
+        CURLOPT_POSTFIELDS => json_encode([
+            'token' => $token,
+            'to' => $phone,
+            'body' => $message,
+            'priority' => 1
+        ]),
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_HTTPHEADER => ['Content-Type: application/json']
+    ]);
+
+    $response = curl_exec($ch);
+    $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    
+    if ($httpCode !== 200) {
+        throw new Exception('Errore invio messaggio WhatsApp');
+    }
+
+    return true;
+}
+### Contenuto di ../css/bot.css ###
+
+/* Base layout */
+.app-container {
+    min-height: 100vh;
+    padding: var(--spacing-md);
+    background: var(--bg-primary);
+}
+
+/* Header actions */
+.header-actions {
+    display: flex;
+    gap: var(--spacing-sm);
+    margin-bottom: var(--spacing-lg);
+}
+
+.add-btn, 
+.refresh-btn {
+    width: 40px;
+    height: 40px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 50%;
+    transition: var(--transition-normal);
+}
+
+.add-btn {
+    background: var(--primary-color);
+    color: white;
+}
+
+.add-btn:hover {
+    background: var(--primary-dark);
+    transform: translateY(-2px);
+    box-shadow: var(--shadow-md);
+}
+
+.refresh-btn {
+    background: var(--bg-secondary);
+    color: var(--text-secondary);
+}
+
+.refresh-btn:hover {
+    background: var(--primary-light);
+    color: var(--primary-color);
+}
+
+/* Stats Panel */
+.stats-panel {
+    background: var(--bg-card);
+    border-radius: var(--border-radius);
+    padding: var(--spacing-md);
+    margin-bottom: var(--spacing-lg);
+    box-shadow: var(--shadow-sm);
+}
+
+.stats-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: var(--spacing-md);
+}
+
+.stat-card {
+    text-align: center;
+    padding: var(--spacing-md);
+    background: var(--bg-secondary);
+    border-radius: var(--border-radius);
+    transition: var(--transition-normal);
+}
+
+.stat-card:hover {
+    transform: translateY(-2px);
+    box-shadow: var(--shadow-md);
+}
+
+.stat-value {
+    font-size: var(--font-size-xl);
+    font-weight: 600;
+    color: var(--primary-color);
+    margin-bottom: var(--spacing-xs);
+}
+
+.stat-label {
+    color: var(--text-secondary);
+    font-size: var(--font-size-sm);
+}
+
+/* Tab Navigation */
+.tab-bar {
+    background: var(--bg-card);
+    padding: var(--spacing-md);
+    border-radius: var(--border-radius);
+    margin-bottom: var(--spacing-md);
+    box-shadow: var(--shadow-sm);
+}
+
+.tabs-group {
+    display: flex;
+    gap: var(--spacing-sm);
+}
+
+.tab {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-sm);
+    padding: var(--spacing-sm) var(--spacing-md);
+    border-radius: var(--border-radius);
+    color: var(--text-secondary);
+    font-weight: 500;
+    transition: var(--transition-normal);
+}
+
+.tab i {
+    font-size: var(--font-size-md);
+}
+
+.tab:hover:not(.active) {
+    background: var(--bg-hover);
+}
+
+.tab.active {
+    background: var(--primary-color);
+    color: white;
+}
+
+/* Panels */
+.panel {
+    display: none;
+}
+
+.panel.active {
+    display: block;
+}
+
+.panel-content {
+    background: var(--bg-card);
+    border-radius: var(--border-radius);
+    box-shadow: var(--shadow-sm);
+    padding: var(--spacing-md);
+}
+
+/* Sliding Panels */
+.sliding-panel {
+    position: fixed;
+    top: 0;
+    right: -100%;
+    width: 50%;
+    height: 100vh;
+    background: var(--bg-card);
+    box-shadow: var(--shadow-lg);
+    transition: right 0.3s ease;
+    z-index: var(--z-modal);
+}
+
+.sliding-panel.active {
+    right: 0;
+}
+
+.sliding-panel-header {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 60px;
+    padding: var(--spacing-md);
+    border-bottom: 1px solid var(--border-color);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    background: var(--bg-card);
+}
+
+.sliding-panel-body {
+    position: absolute;
+    top: 60px;
+    bottom: 80px;
+    left: 0;
+    right: 0;
+    overflow-y: auto;
+    padding: var(--spacing-md);
+}
+
+.sliding-panel-actions {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    height: 80px;
+    padding: var(--spacing-md);
+    background: var(--bg-card);
+    border-top: 1px solid var(--border-color);
+    display: flex;
+    justify-content: flex-end;
+    align-items: center;
+    gap: var(--spacing-md);
+}
+
+/* Flow Steps */
+.flow-step {
+    background: var(--bg-secondary);
+    border-radius: var(--border-radius);
+    padding: var(--spacing-md);
+    margin-bottom: var(--spacing-md);
+    border: 1px solid var(--border-color);
+}
+
+.step-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: var(--spacing-md);
+}
+
+.step-title {
+    font-weight: 500;
+    color: var(--text-primary);
+}
+
+.remove-step {
+    width: 32px;
+    height: 32px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 50%;
+    background: var(--danger-color);
+    color: white;
+    transition: var(--transition-normal);
+}
+
+.remove-step:hover {
+    background: #dc2626;
+    transform: scale(1.05);
+}
+
+.step-options {
+    margin-top: var(--spacing-md);
+    padding-top: var(--spacing-md);
+    border-top: 1px solid var(--border-color);
+}
+
+/* Conversation Timeline */
+.message-timeline {
+    display: flex;
+    flex-direction: column;
+    gap: var(--spacing-md);
+    padding: var(--spacing-md);
+}
+
+.message {
+    max-width: 80%;
+    display: flex;
+    flex-direction: column;
+}
+
+.message.incoming {
+    align-self: flex-start;
+}
+
+.message.outgoing {
+    align-self: flex-end;
+}
+
+.message-time {
+    font-size: var(--font-size-xs);
+    color: var(--text-secondary);
+    margin-bottom: var(--spacing-xs);
+}
+
+.message-content {
+    padding: var(--spacing-sm);
+    border-radius: var(--border-radius);
+    background: var(--bg-secondary);
+    box-shadow: var(--shadow-sm);
+}
+
+.message.incoming .message-content {
+    background: white;
+    border: 1px solid var(--border-color);
+}
+
+.message.outgoing .message-content {
+    background: var(--primary-light);
+    color: var(--primary-color);
+}
+
+.message-image {
+    max-width: 200px;
+    max-height: 200px;
+    border-radius: var(--border-radius);
+}
+
+.message-document {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-sm);
+    padding: var(--spacing-sm);
+    background: white;
+    border-radius: var(--border-radius);
+}
+
+.message-document i {
+    font-size: var(--font-size-lg);
+    color: var(--text-secondary);
+}
+
+/* Info Panels */
+.info-group {
+    margin-bottom: var(--spacing-lg);
+}
+
+.info-group label {
+    display: block;
+    color: var(--text-secondary);
+    font-size: var(--font-size-sm);
+    margin-bottom: var(--spacing-xs);
+}
+
+.info-row {
+    display: flex;
+    gap: var(--spacing-md);
+    margin-bottom: var(--spacing-sm);
+}
+
+.info-label {
+    min-width: 100px;
+    color: var(--text-secondary);
+    font-weight: 500;
+}
+
+.info-value {
+    flex: 1;
+}
+
+/* Status Badges */
+.status-badge {
+    display: inline-flex;
+    align-items: center;
+    padding: 4px 8px;
+    border-radius: var(--border-radius-sm);
+    font-size: var(--font-size-sm);
+    font-weight: 500;
+}
+
+.status-badge.success {
+    background: var(--success-color-light);
+    color: var(--success-color);
+}
+
+.status-badge.warning {
+    background: var(--warning-color-light);
+    color: var(--warning-color);
+}
+
+.status-badge.error {
+    background: var(--danger-color-light);
+    color: var(--danger-color);
+}
+
+.status-badge.info {
+    background: var(--info-color-light);
+    color: var(--info-color);
+}
+
+/* Form Elements */
+.form-group {
+    margin-bottom: var(--spacing-md);
+}
+
+.form-group label {
+    display: block;
+    margin-bottom: var(--spacing-xs);
+    color: var(--text-primary);
+    font-weight: 500;
+}
+
+.form-input {
+    width: 100%;
+    padding: var(--spacing-sm);
+    border: 1px solid var(--border-color);
+    border-radius: var(--border-radius);
+    background: var(--bg-input);
+    color: var(--text-primary);
+    transition: var(--transition-normal);
+}
+
+.form-input:focus {
+    outline: none;
+    border-color: var(--primary-color);
+    box-shadow: 0 0 0 2px rgba(var(--primary-color-rgb), 0.1);
+}
+
+.message-editor {
+    min-height: 100px;
+    resize: vertical;
+}
+
+/* Template Controls */
+.template-controls {
+    display: flex;
+    gap: var(--spacing-sm);
+    margin-bottom: var(--spacing-sm);
+}
+
+.template-help {
+    margin-top: var(--spacing-xs);
+    font-size: var(--font-size-sm);
+    color: var(--text-secondary);
+}
+
+.placeholder-tag {
+    display: inline-block;
+    padding: 2px 6px;
+    background: var(--primary-color-light);
+    color: var(--primary-color);
+    border-radius: var(--border-radius-sm);
+    margin: 2px;
+    cursor: pointer;
+    transition: var(--transition-normal);
+}
+
+.placeholder-tag:hover {
+    background: var(--primary-color);
+    color: white;
+}
+
+/* Switch Toggle */
+.switch-container {
+    position: relative;
+    display: inline-block;
+    width: 60px;
+    height: 34px;
+}
+
+.switch-container input {
+    opacity: 0;
+    width: 0;
+    height: 0;
+}
+
+.switch-slider {
+    position: absolute;
+    cursor: pointer;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background-color: var(--bg-secondary);
+    transition: .4s;
+    border-radius: 34px;
+}
+
+.switch-slider:before {
+    position: absolute;
+    content: "";
+    height: 26px;
+    width: 26px;
+    left: 4px;
+    bottom: 4px;
+    background-color: white;
+    transition: .4s;
+    border-radius: 50%;
+}
+
+input:checked + .switch-slider {
+    background-color: var(--primary-color);
+}
+
+input:checked + .switch-slider:before {
+    transform: translateX(26px);
+}
+
+/* Action Buttons */
+.action-btn {
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    transition: var(--transition-normal);
+}
+
+.action-btn.view {
+    background: var(--bg-secondary);
+    color: var(--text-secondary);
+}
+
+.action-btn.view:hover {
+    background: var(--primary-light);
+    color: var(--primary-color);
+}
+
+.action-btn.play {
+    background: var(--success-color);
+    color: white;
+}
+
+.action-btn.play:hover {
+    background: #22c55e;
+}
+
+.action-btn.pause {
+    background: var(--warning-color);
+    color: white;
+}
+
+.action-btn.pause:hover {
+    background: #f59e0b;
+}
+
+.action-btn.delete {
+    background: var(--danger-color);
+    color: white;
+}
+
+.action-btn.delete:hover {
+    background: #dc2626;
+}
+
+/* Notifications */
+.notification-container {
+    position: fixed;
+    top: 20px;
+    right: 20px;
+    z-index: var(--z-notification);
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.notification-toast {
+    min-width: 300px;
+    padding: 16px;
+    border-radius: 8px;
+    background: white;
+    box-shadow: var(--shadow-md);
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    animation: slideIn 0.3s ease;
+    position: relative;
+    overflow: hidden;
+}
+
+.notification-toast.success {
+    border-left: 4px solid var(--success-color);
+}
+
+.notification-toast.error {
+    border-left: 4px solid var(--danger-color);
+}
+
+.notification-toast i {
+    font-size: 20px;
+}
+
+.notification-toast.success i {
+    color: var(--success-color);
+}
+
+.notification-toast.error i {
+    color: var(--danger-color);
+}
+
+.notification-toast .message {
+    flex: 1;
+    font-size: 14px;
+    color: var(--text-primary);
+}
+
+.notification-toast .progress {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    width: 100%;
+    height: 3px;
+    background: var(--primary-light);
+    animation: shrink 3s linear;
+}
+
+@keyframes slideIn {
+    from {
+        transform: translateX(100%);
+        opacity: 0;
+    }
+    to {
+        transform: translateX(0);
+        opacity: 1;
+    }
+}
+
+@keyframes shrink {
+    from {
+        width: 100%;
+    }
+    to {
+        width: 0%;
+    }
+}
+
+/* Responsive Design */
+@media (max-width: 1024px) {
+    .sliding-panel {
+        width: 75%;
+    }
+
+    .stats-grid {
+        grid-template-columns: repeat(2, 1fr);
+    }
+}
+
+@media (max-width: 768px) {
+    .sliding-panel {
+        width: 100%;
+    }
+
+    .tab i {
+        margin-right: 0;
+    }
+
+    .tab span {
+        display: none;
+    }
+}
+
+@media (max-width: 480px) {
+    .stats-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .notification-toast {
+        width: 90%;
+        min-width: auto;
+        margin: 0 10px;
+    }
+}
+### Contenuto di ../common/head.php ###
+
+<?php
+declare(strict_types=1);
+
+ob_start();
+
+// Error handling function
+function handleError($message, $isDebug = true) {
+    ob_end_clean();
+    error_log($message);
+    die($isDebug ? $message : "An application error occurred. Please contact the system administrator.");
+}
+
+try {
+    error_reporting(E_ALL);
+    ini_set('display_errors', '1');
+
+    // Define base paths
+    if (!defined('BASEPATH')) {
+        define('BASEPATH', dirname(dirname(__FILE__)));
+    }
+
+    if (!defined('APP_BASE_PATH')) {
+        $defaultPath = '/insightg/wup/';
+        $serverPath = $_SERVER['REQUEST_URI'] ?? '/';
+        $appPath = preg_match('/^\/[a-zA-Z0-9_-]+\/[a-zA-Z0-9_-]+\//', $serverPath, $matches) ? $matches[0] : '/';
+        define('APP_BASE_PATH', $appPath);
+    }
+
+    // Session configuration and initialization
+    function initializeSession(): void {
+        if (session_status() === PHP_SESSION_NONE) {
+            session_set_cookie_params([
+                'lifetime' => 0,
+                'path' => APP_BASE_PATH,
+                'domain' => '',
+                'secure' => true,
+                'httponly' => true,
+                'samesite' => 'Strict'
+            ]);
+            session_start();
+        }
+    }
+
+    // Configuration loading
+    function load_config(): array {
+        $host = $_SERVER['HTTP_HOST'] ?? '';
+        $parts = explode('.', $host);
+        $thirdLevel = count($parts) >= 3 ? $parts[0] : 'default';
+        
+        $configPath = BASEPATH . '/config/' . $thirdLevel . '/config.ini';
+        
+        if (!file_exists($configPath)) {
+            $configPath = BASEPATH . '/config/default/config.ini';
+            if (!file_exists($configPath)) {
+                throw new Exception("Configuration file not found");
+            }
+        }
+        
+        return parse_ini_file($configPath, true) ?: throw new Exception("Failed to parse configuration file");
+    }
+
+    // Get custom CSS path for domain
+    function getCustomCssPath(string $cssFileName): string {
+        $domain = explode('.', $_SERVER['HTTP_HOST'])[0];
+        $customCssPath = "../config/{$domain}/{$cssFileName}";
+        return file_exists($customCssPath) ? $customCssPath : "../config/default/{$cssFileName}";
+    }
+
+    // Initialize core components
+    initializeSession();
+    $iniConfig = load_config();
+    
+    // Set timezone from config
+    $timezone = $iniConfig['app']['timezone'] ?? 'Europe/Rome';
+    date_default_timezone_set($timezone);
+
+    // Database configuration and connection
+    function initializeDatabase(array $dbConfig): PDO {
+        return new PDO(
+            "mysql:host={$dbConfig['host']};dbname={$dbConfig['dbname']};charset=utf8mb4",
+            $dbConfig['username'],
+            $dbConfig['password'],
+            [
+                PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
+                PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
+                PDO::ATTR_EMULATE_PREPARES => false
+            ]
+        );
+    }
+
+    $db = initializeDatabase($iniConfig['database']);
+
+    // Menu loading for authenticated users
+    function loadUserMenu(PDO $db, int $userId): array {
+        $stmt = $db->prepare("
+            SELECT DISTINCT m.* 
+            FROM t_menu_items m
+            JOIN t_menu_permissions mp ON m.id = mp.menu_id
+            JOIN t_user_groups ug ON mp.group_id = ug.group_id
+            WHERE ug.user_id = ?
+            ORDER BY m.menu_order
+        ");
+        $stmt->execute([$userId]);
+        $items = $stmt->fetchAll();
+        
+        $menu = [];
+        foreach ($items as $item) {
+            if ($item['parent_id'] === null) {
+                $item['children'] = [];
+                foreach ($items as $subItem) {
+                    if ($subItem['parent_id'] === $item['id']) {
+                        $item['children'][] = $subItem;
+                    }
+                }
+                $menu[] = $item;
+            }
+        }
+        return $menu;
+    }
+
+    if (isset($_SESSION['user']) && $_SESSION['user']['logged_in']) {
+        $config['menu'] = loadUserMenu($db, $_SESSION['user']['id']);
+    }
+
+    // Application configuration setup
+    $config['appConfig'] = [
+        'appName' => $iniConfig['app']['name'] ?? 'WUP Application',
+        'logo' => APP_BASE_PATH . ($iniConfig['app']['logo'] ?? 'images/default-logo.png'),
+        'basePath' => APP_BASE_PATH,
+        'debug' => filter_var($iniConfig['app']['debug'] ?? false, FILTER_VALIDATE_BOOLEAN),
+        'timezone' => $timezone,
+        'sessionTimeout' => (int)($iniConfig['timers']['session_timeout'] ?? 3600000),
+        'maxUploadSize' => $iniConfig['export']['chunk_size'] ?? '5000',
+        'jsDebug' => filter_var($iniConfig['js_settings']['debug_mode'] ?? false, FILTER_VALIDATE_BOOLEAN),
+        'dateFormat' => $iniConfig['js_settings']['date_format'] ?? 'DD/MM/YYYY',
+        'currencyFormat' => $iniConfig['js_settings']['currency_format'] ?? 'EUR'
+    ];
+
+    
+
+    // Authentication management
+  // Authentication management
+  function handleAuthentication(PDO $db, array $config, array $iniConfig): void {
+    require_once BASEPATH . '/common/AuthManager.php';
+    $auth = new AuthManager($db, $iniConfig);
+    
+    $publicPages = ['login.php', 'forgot-password.php', 'reset-password.php'];
+    $currentPage = basename($_SERVER['SCRIPT_NAME']);
+    
+    // Check authentication for non-public pages
+    if (!in_array($currentPage, $publicPages) && !$auth->isAuthenticated()) {
+        if (!headers_sent()) {
+            header('Location: ' . APP_BASE_PATH . 'login.php');
+            exit();
+        }
+        throw new Exception("Headers already sent - Cannot redirect to login");
+    }
+
+    // Check session timeout
+    if ($auth->isAuthenticated() && !$auth->checkSessionTimeout()) {
+        if (!headers_sent()) {
+            header('Location: ' . APP_BASE_PATH . 'login.php?session_expired=1');
+            exit();
+        }
+        throw new Exception("Headers already sent - Cannot redirect to session expired");
+    }
+
+    // Update last activity timestamp
+    if (isset($_SESSION['user']) && $_SESSION['user']['logged_in']) {
+        $_SESSION['last_activity'] = time();
+    }
+}
+
+handleAuthentication($db, $config, $iniConfig);
+
+} catch (PDOException $e) {
+    handleError("Database Error: " . $e->getMessage(), $config['appConfig']['debug'] ?? false);
+} catch (Exception $e) {
+    handleError("Critical Error: " . $e->getMessage(), $config['appConfig']['debug'] ?? false);
+}
+### Contenuto di ../config/cia/root.css ###
+
+:root {
+    /* Colors - Base */
+    --primary-color: #388e3c;
+    --primary-dark: #2e7d32;
+    --primary-light: #81c784;
+    --primary-color-rgb: 56, 142, 60;
+    
+    /* Status Colors */
+    --success-color: #28a745;
+    --danger-color: #e53935;
+    --warning-color: #f9a825;
+    --info-color: #1976d2;
+    
+    /* Text Colors */
+    --text-primary: #2e7d32;
+    --text-secondary: #388e3c;
+    --text-muted: #616161;
+    
+    /* Background Colors */
+    --bg-primary: #ffffff;
+    --bg-secondary: #f4f4f4;
+    --bg-card: #ffffff;
+    --bg-selected: #e8f5e9;
+    --bg-hover: #f1f8e9;
+    --bg-input: #ffffff;
+    
+    /* Border Colors */
+    --border-color: #e0e0e0;
+    
+    /* Typography */
+    --font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+    --font-size-xs: 0.75rem;   /* 12px */
+    --font-size-sm: 0.875rem;  /* 14px */
+    --font-size-md: 1rem;      /* 16px */
+    --font-size-lg: 1.125rem;  /* 18px */
+    --font-size-xl: 1.25rem;   /* 20px */
+    
+    /* Spacing */
+    --spacing-xs: 0.25rem;     /* 4px */
+    --spacing-sm: 0.5rem;      /* 8px */
+    --spacing-md: 1rem;        /* 16px */
+    --spacing-lg: 1.5rem;      /* 24px */
+    --spacing-xl: 2rem;        /* 32px */
+    
+    /* Border Radius */
+    --border-radius-sm: 4px;
+    --border-radius: 8px;
+    --border-radius-lg: 12px;
+    
+    /* Shadows */
+    --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.05);
+    --shadow-sm: 0 2px 4px rgba(0, 0, 0, 0.1);
+    --shadow-md: 0 4px 8px rgba(0, 0, 0, 0.12);
+    --shadow-lg: 0 8px 16px rgba(0, 0, 0, 0.15);
+    
+    /* Transitions */
+    --transition-fast: 0.2s ease;
+    --transition-normal: 0.3s ease;
+    --transition-slow: 0.5s ease;
+    
+    /* Z-index */
+    --z-modal: 1000;
+    --z-notification: 1100;
+    --z-tooltip: 1200;
+}
+
+/* Base Reset */
+*, *::before, *::after {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+}
+
+body {
+    font-family: var(--font-family);
+    line-height: 1.5;
+    color: var(--text-primary);
+    background-color: var(--bg-primary);
+}
+
+/* Form Elements */
+input, select, button {
+    font-family: inherit;
+    font-size: inherit;
+}
+
+button {
+    cursor: pointer;
+    border: none;
+    background: none;
+    padding: var(--spacing-sm) var(--spacing-md);
+    border-radius: var(--border-radius);
+    font-weight: 500;
+    transition: var(--transition-normal);
+}
+
+.btn {
+    background: var(--primary-color);
+    color: white;
+}
+
+.btn:hover:not(:disabled) {
+    background: var(--primary-dark);
+    transform: translateY(-1px);
+    box-shadow: var(--shadow-sm);
+}
+
+.btn:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+}
+
+/* Buttons Variants */
+.btn-secondary {
+    background: var(--bg-secondary);
+    color: var(--text-primary);
+    border: 1px solid var(--border-color);
+}
+
+.btn-secondary:hover:not(:disabled) {
+    background: var(--bg-hover);
+    border-color: var(--primary-light);
+}
+
+.btn-danger {
+    background: var(--danger-color);
+    color: white;
+}
+
+.btn-danger:hover:not(:disabled) {
+    background: #d32f2f;
+}
+
+.btn-warning {
+    background: var(--warning-color);
+    color: white;
+}
+
+.btn-warning:hover:not(:disabled) {
+    background: #f57f17;
+}
+
+.btn-info {
+    background: var(--info-color);
+    color: white;
+}
+
+.btn-info:hover:not(:disabled) {
+    background: #1565c0;
+}
+
+/* Input Elements */
+input[type="text"],
+input[type="email"],
+input[type="password"],
+input[type="number"],
+input[type="search"],
+input[type="tel"],
+input[type="url"],
+textarea,
+select {
+    width: 100%;
+    padding: var(--spacing-sm) var(--spacing-md);
+    border: 1px solid var(--border-color);
+    border-radius: var(--border-radius);
+    background-color: var(--bg-input);
+    color: var(--text-primary);
+    transition: var(--transition-fast);
+}
+
+input:focus,
+textarea:focus,
+select:focus {
+    outline: none;
+    border-color: var(--primary-color);
+    box-shadow: 0 0 0 2px rgba(var(--primary-color-rgb), 0.1);
+}
+
+/* Links */
+a {
+    color: var(--primary-color);
+    text-decoration: none;
+    transition: var(--transition-fast);
+}
+
+a:hover {
+    color: var(--primary-dark);
+    text-decoration: underline;
+}
+
+/* Typography Utilities */
+.text-xs { font-size: var(--font-size-xs); }
+.text-sm { font-size: var(--font-size-sm); }
+.text-md { font-size: var(--font-size-md); }
+.text-lg { font-size: var(--font-size-lg); }
+.text-xl { font-size: var(--font-size-xl); }
+
+.font-light { font-weight: 300; }
+.font-normal { font-weight: 400; }
+.font-medium { font-weight: 500; }
+.font-semibold { font-weight: 600; }
+.font-bold { font-weight: 700; }
+
+/* Spacing Utilities */
+.m-0 { margin: 0; }
+.p-0 { padding: 0; }
+
+.mt-auto { margin-top: auto; }
+.mb-auto { margin-bottom: auto; }
+.ml-auto { margin-left: auto; }
+.mr-auto { margin-right: auto; }
+
+/* Display Utilities */
+.hidden { display: none; }
+.block { display: block; }
+.inline { display: inline; }
+.inline-block { display: inline-block; }
+.flex { display: flex; }
+.inline-flex { display: inline-flex; }
+
+/* Flex Utilities */
+.flex-row { flex-direction: row; }
+.flex-col { flex-direction: column; }
+.items-center { align-items: center; }
+.justify-center { justify-content: center; }
+.justify-between { justify-content: space-between; }
+.flex-wrap { flex-wrap: wrap; }
+.flex-1 { flex: 1; }
+### Dump della struttura del database CIA ###
+
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!50503 SET character_set_client = utf8mb4 */;
+CREATE TABLE `Tesseramenti` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `denominazione` varchar(255) DEFAULT NULL,
+  `codice_fiscale` varchar(255) DEFAULT NULL,
+  `partita_iva` varchar(255) DEFAULT NULL,
+  `cod_permanenza` varchar(255) DEFAULT NULL,
+  `desc_permanenza` varchar(255) DEFAULT NULL,
+  `articolo` varchar(255) DEFAULT NULL,
+  `importo` varchar(255) DEFAULT NULL,
+  `note` varchar(255) DEFAULT NULL,
+  PRIMARY KEY (`id`)
+) ENGINE=InnoDB AUTO_INCREMENT=5312 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!50503 SET character_set_client = utf8mb4 */;
+CREATE TABLE `aziende` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `codice_fiscale` text CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci,
+  `socio_principale` text CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci,
+  `phone` text CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci,
+  `note` text,
+  `territorio_id` int DEFAULT NULL,
+  PRIMARY KEY (`id`),
+  KEY `fk_aziende_territorio` (`territorio_id`),
+  CONSTRAINT `fk_aziende_territorio` FOREIGN KEY (`territorio_id`) REFERENCES `territorio` (`id`)
+) ENGINE=InnoDB AUTO_INCREMENT=5994 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!50503 SET character_set_client = utf8mb4 */;
+CREATE TABLE `cellulari_aziendali_cia_umbria` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `dipendente` varchar(255) DEFAULT NULL,
+  `area` varchar(255) DEFAULT NULL,
+  `ufficio` varchar(255) DEFAULT NULL,
+  `cellulare_aziendale` varchar(255) DEFAULT NULL,
+  PRIMARY KEY (`id`)
+) ENGINE=InnoDB AUTO_INCREMENT=75 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!50503 SET character_set_client = utf8mb4 */;
+CREATE TABLE `dipendenti` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `nome` text CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci,
+  `phone` varchar(25) NOT NULL,
+  `codice_fiscale` text,
+  `data_di_nascita` text,
+  `luogo_di_nascita` text,
+  `azienda` text,
+  `area` text,
+  `settore` text,
+  `ruolo` text,
+  `territorio_id` int DEFAULT NULL,
+  PRIMARY KEY (`id`),
+  KEY `fk_dipendenti_territorio` (`territorio_id`),
+  CONSTRAINT `fk_dipendenti_territorio` FOREIGN KEY (`territorio_id`) REFERENCES `territorio` (`id`)
+) ENGINE=InnoDB AUTO_INCREMENT=107 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!50503 SET character_set_client = utf8mb4 */;
+CREATE TABLE `phonetest` (
+  `id` int unsigned NOT NULL AUTO_INCREMENT,
+  `nome` varchar(100) NOT NULL,
+  `phone` varchar(100) NOT NULL,
+  `note` varchar(100) NOT NULL,
+  PRIMARY KEY (`id`)
+) ENGINE=InnoDB AUTO_INCREMENT=5 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!50503 SET character_set_client = utf8mb4 */;
+CREATE TABLE `t_bot_conversations` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `flow_id` int NOT NULL,
+  `contact_phone` varchar(50) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `contact_name` varchar(100) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `current_step` varchar(50) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `state` json DEFAULT NULL,
+  `started_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+  `last_interaction_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+  `is_completed` tinyint(1) DEFAULT '0',
+  `completion_data` json DEFAULT NULL,
+  PRIMARY KEY (`id`),
+  KEY `flow_id` (`flow_id`),
+  CONSTRAINT `t_bot_conversations_ibfk_1` FOREIGN KEY (`flow_id`) REFERENCES `t_bot_flows` (`id`)
+) ENGINE=InnoDB AUTO_INCREMENT=6 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!50503 SET character_set_client = utf8mb4 */;
+CREATE TABLE `t_bot_flows` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `name` varchar(100) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `source_table` varchar(64) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `phone_field` varchar(64) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `welcome_message` text COLLATE utf8mb4_unicode_ci NOT NULL,
+  `flow_data` json NOT NULL,
+  `created_by` int NOT NULL,
+  `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  `is_active` tinyint(1) DEFAULT '1',
+  PRIMARY KEY (`id`),
+  KEY `created_by` (`created_by`),
+  CONSTRAINT `t_bot_flows_ibfk_1` FOREIGN KEY (`created_by`) REFERENCES `t_users` (`id`)
+) ENGINE=InnoDB AUTO_INCREMENT=2 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!50503 SET character_set_client = utf8mb4 */;
+CREATE TABLE `t_bot_leads` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `conversation_id` int NOT NULL,
+  `flow_id` int NOT NULL,
+  `contact_phone` varchar(50) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `contact_name` varchar(100) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `lead_type` varchar(50) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `lead_data` json NOT NULL,
+  `status` enum('new','processing','completed','failed') COLLATE utf8mb4_unicode_ci DEFAULT 'new',
+  `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+  `processed_at` timestamp NULL DEFAULT NULL,
+  PRIMARY KEY (`id`),
+  KEY `conversation_id` (`conversation_id`),
+  KEY `flow_id` (`flow_id`),
+  CONSTRAINT `t_bot_leads_ibfk_1` FOREIGN KEY (`conversation_id`) REFERENCES `t_bot_conversations` (`id`),
+  CONSTRAINT `t_bot_leads_ibfk_2` FOREIGN KEY (`flow_id`) REFERENCES `t_bot_flows` (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!50503 SET character_set_client = utf8mb4 */;
+CREATE TABLE `t_bot_messages` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `conversation_id` int NOT NULL,
+  `direction` enum('incoming','outgoing') COLLATE utf8mb4_unicode_ci NOT NULL,
+  `content` text COLLATE utf8mb4_unicode_ci NOT NULL,
+  `message_type` varchar(50) COLLATE utf8mb4_unicode_ci DEFAULT 'text',
+  `sent_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+  `metadata` json DEFAULT NULL,
+  PRIMARY KEY (`id`),
+  KEY `conversation_id` (`conversation_id`),
+  CONSTRAINT `t_bot_messages_ibfk_1` FOREIGN KEY (`conversation_id`) REFERENCES `t_bot_conversations` (`id`)
+) ENGINE=InnoDB AUTO_INCREMENT=33 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!50503 SET character_set_client = utf8mb4 */;
+CREATE TABLE `t_camp_campaigns` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `name` varchar(100) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `source_table` varchar(64) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `description` text COLLATE utf8mb4_unicode_ci,
+  `message_template` text COLLATE utf8mb4_unicode_ci NOT NULL,
+  `image_path` varchar(255) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `attachment_path` varchar(255) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `status` enum('draft','active','paused','completed','failed') COLLATE utf8mb4_unicode_ci DEFAULT 'draft',
+  `total_recipients` int DEFAULT '0',
+  `sent_count` int DEFAULT '0',
+  `created_by` int NOT NULL,
+  `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+  `started_at` timestamp NULL DEFAULT NULL,
+  `completed_at` timestamp NULL DEFAULT NULL,
+  `updated_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  `updated_by` int DEFAULT NULL,
+  PRIMARY KEY (`id`),
+  KEY `created_by` (`created_by`),
+  KEY `idx_status` (`status`),
+  KEY `idx_dates` (`created_at`,`started_at`,`completed_at`),
+  CONSTRAINT `fk_camp_campaigns_user` FOREIGN KEY (`created_by`) REFERENCES `t_users` (`id`)
+) ENGINE=InnoDB AUTO_INCREMENT=131 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!50503 SET character_set_client = utf8mb4 */;
+CREATE TABLE `t_camp_logs` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `campaign_id` int DEFAULT NULL,
+  `recipient_id` int DEFAULT NULL,
+  `action_type` varchar(50) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `description` text COLLATE utf8mb4_unicode_ci NOT NULL,
+  `user_id` int DEFAULT NULL,
+  `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  KEY `idx_campaign` (`campaign_id`),
+  KEY `idx_recipient` (`recipient_id`),
+  KEY `idx_user` (`user_id`),
+  KEY `idx_action_type` (`action_type`),
+  KEY `idx_created_at` (`created_at`),
+  CONSTRAINT `fk_camp_logs_campaign` FOREIGN KEY (`campaign_id`) REFERENCES `t_camp_campaigns` (`id`) ON DELETE SET NULL,
+  CONSTRAINT `fk_camp_logs_recipient` FOREIGN KEY (`recipient_id`) REFERENCES `t_camp_recipients` (`id`) ON DELETE SET NULL,
+  CONSTRAINT `fk_camp_logs_user` FOREIGN KEY (`user_id`) REFERENCES `t_users` (`id`) ON DELETE SET NULL
+) ENGINE=InnoDB AUTO_INCREMENT=9 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!50503 SET character_set_client = utf8mb4 */;
+CREATE TABLE `t_camp_messages` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `campaign_id` int NOT NULL,
+  `recipient_id` int NOT NULL,
+  `message_content` text COLLATE utf8mb4_unicode_ci NOT NULL,
+  `ultramsg_message_id` varchar(255) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `status` enum('pending','sent','delivered','read','failed') COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'pending',
+  `data_status` datetime DEFAULT NULL,
+  `metadata` json DEFAULT NULL,
+  `error_message` text COLLATE utf8mb4_unicode_ci,
+  `data_msg` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  KEY `idx_campaign_recipient` (`campaign_id`,`recipient_id`),
+  KEY `idx_status` (`status`),
+  KEY `idx_data_msg` (`data_msg`),
+  KEY `idx_ultramsg_id` (`ultramsg_message_id`),
+  KEY `fk_camp_messages_recipient` (`recipient_id`),
+  CONSTRAINT `fk_camp_messages_campaign` FOREIGN KEY (`campaign_id`) REFERENCES `t_camp_campaigns` (`id`) ON DELETE CASCADE,
+  CONSTRAINT `fk_camp_messages_recipient` FOREIGN KEY (`recipient_id`) REFERENCES `t_camp_recipients` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB AUTO_INCREMENT=7 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!50503 SET character_set_client = utf8mb4 */;
+CREATE TABLE `t_camp_received_attachments` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `recipient_id` int NOT NULL,
+  `campaign_id` int NOT NULL,
+  `message_id` int NOT NULL,
+  `file_name` varchar(255) NOT NULL,
+  `file_path` varchar(512) NOT NULL,
+  `mime_type` varchar(127) NOT NULL,
+  `file_size` bigint unsigned DEFAULT NULL,
+  `received_at` datetime NOT NULL,
+  `processed_at` datetime DEFAULT NULL,
+  `metadata` json DEFAULT NULL,
+  `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  KEY `idx_message` (`message_id`),
+  KEY `idx_campaign_recipient` (`campaign_id`,`recipient_id`),
+  KEY `idx_mime_type` (`mime_type`),
+  KEY `idx_dates` (`received_at`,`processed_at`),
+  KEY `fk_camp_received_attachments_recipient` (`recipient_id`),
+  CONSTRAINT `fk_camp_received_attachments_campaign` FOREIGN KEY (`campaign_id`) REFERENCES `t_camp_campaigns` (`id`) ON DELETE CASCADE,
+  CONSTRAINT `fk_camp_received_attachments_message` FOREIGN KEY (`message_id`) REFERENCES `t_camp_received_messages` (`id`) ON DELETE CASCADE,
+  CONSTRAINT `fk_camp_received_attachments_recipient` FOREIGN KEY (`recipient_id`) REFERENCES `t_camp_recipients` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB AUTO_INCREMENT=2 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!50503 SET character_set_client = utf8mb4 */;
+CREATE TABLE `t_camp_received_messages` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `recipient_id` int NOT NULL,
+  `campaign_id` int NOT NULL,
+  `message_type` varchar(50) NOT NULL,
+  `message_content` text,
+  `received_at` datetime NOT NULL,
+  `seen_at` datetime DEFAULT NULL,
+  `processed_at` datetime DEFAULT NULL,
+  `metadata` json DEFAULT NULL,
+  `has_attachment` tinyint(1) DEFAULT '0',
+  `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` timestamp NULL DEFAULT NULL,
+  PRIMARY KEY (`id`),
+  KEY `idx_campaign_recipient` (`campaign_id`,`recipient_id`),
+  KEY `idx_message_type` (`message_type`),
+  KEY `idx_dates` (`received_at`,`processed_at`),
+  KEY `fk_camp_received_messages_recipient` (`recipient_id`),
+  CONSTRAINT `fk_camp_received_messages_campaign` FOREIGN KEY (`campaign_id`) REFERENCES `t_camp_campaigns` (`id`) ON DELETE CASCADE,
+  CONSTRAINT `fk_camp_received_messages_recipient` FOREIGN KEY (`recipient_id`) REFERENCES `t_camp_recipients` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB AUTO_INCREMENT=4 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!50503 SET character_set_client = utf8mb4 */;
+CREATE TABLE `t_camp_recipients` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `campaign_id` int NOT NULL,
+  `record_id` int NOT NULL,
+  `source_table` varchar(64) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `phone` varchar(50) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `status` enum('pending','sent','failed') COLLATE utf8mb4_unicode_ci DEFAULT 'pending',
+  `sent_at` timestamp NULL DEFAULT NULL,
+  `error_message` text COLLATE utf8mb4_unicode_ci,
+  `custom_data` json DEFAULT NULL,
+  `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  KEY `idx_campaign_status` (`campaign_id`,`status`),
+  KEY `idx_phone` (`phone`),
+  KEY `idx_record_source` (`record_id`,`source_table`),
+  KEY `idx_dates` (`sent_at`),
+  CONSTRAINT `fk_camp_recipients_campaign` FOREIGN KEY (`campaign_id`) REFERENCES `t_camp_campaigns` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB AUTO_INCREMENT=8 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!50503 SET character_set_client = utf8mb4 */;
+CREATE TABLE `t_contacts` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `phone` varchar(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
+  `name` varchar(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
+  `last_message_at` timestamp NULL DEFAULT NULL,
+  `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `idx_phone` (`phone`),
+  KEY `idx_last_message` (`last_message_at`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!50503 SET character_set_client = utf8mb4 */;
+CREATE TABLE `t_groups` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `name` varchar(50) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
+  `description` text CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci,
+  `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `name` (`name`)
+) ENGINE=InnoDB AUTO_INCREMENT=71 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!50503 SET character_set_client = utf8mb4 */;
+CREATE TABLE `t_liste` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `nome` varchar(100) NOT NULL,
+  `descrizione` text,
+  `contatti` json DEFAULT NULL,
+  `template_message` text,
+  `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`)
+) ENGINE=InnoDB AUTO_INCREMENT=20 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!50503 SET character_set_client = utf8mb4 */;
+CREATE TABLE `t_liste_contatti` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `lista_id` int NOT NULL,
+  `contatto_id` int NOT NULL,
+  `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `unique_lista_contatto` (`lista_id`,`contatto_id`),
+  KEY `contatto_id` (`contatto_id`),
+  CONSTRAINT `t_liste_contatti_ibfk_1` FOREIGN KEY (`lista_id`) REFERENCES `t_liste` (`id`) ON DELETE CASCADE,
+  CONSTRAINT `t_liste_contatti_ibfk_2` FOREIGN KEY (`contatto_id`) REFERENCES `t_contatti` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB AUTO_INCREMENT=5 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!50503 SET character_set_client = utf8mb4 */;
+CREATE TABLE `t_menu_items` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `name` varchar(50) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
+  `icon` varchar(50) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `page_url` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `parent_id` int DEFAULT NULL,
+  `menu_type` enum('main','sidebar','config') CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
+  `menu_order` int DEFAULT '0',
+  PRIMARY KEY (`id`),
+  KEY `idx_menu_items_parent` (`parent_id`),
+  CONSTRAINT `t_menu_items_ibfk_1` FOREIGN KEY (`parent_id`) REFERENCES `t_menu_items` (`id`) ON DELETE SET NULL
+) ENGINE=InnoDB AUTO_INCREMENT=29 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!50503 SET character_set_client = utf8mb4 */;
+CREATE TABLE `t_menu_permissions` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `group_id` int DEFAULT NULL,
+  `menu_id` int DEFAULT NULL,
+  `can_view` tinyint(1) DEFAULT '0',
+  `can_edit` tinyint(1) DEFAULT '0',
+  PRIMARY KEY (`id`),
+  KEY `idx_permissions_group` (`group_id`),
+  KEY `idx_permissions_menu_item` (`menu_id`),
+  CONSTRAINT `t_menu_permissions_ibfk_1` FOREIGN KEY (`group_id`) REFERENCES `t_groups` (`id`) ON DELETE CASCADE,
+  CONSTRAINT `t_menu_permissions_ibfk_2` FOREIGN KEY (`menu_id`) REFERENCES `t_menu_items` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB AUTO_INCREMENT=44 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!50503 SET character_set_client = utf8mb4 */;
+CREATE TABLE `t_notifications` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `user_id` int NOT NULL,
+  `message` varchar(255) NOT NULL,
+  `is_read` tinyint(1) DEFAULT '0',
+  `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  KEY `user_id` (`user_id`),
+  CONSTRAINT `t_notifications_ibfk_1` FOREIGN KEY (`user_id`) REFERENCES `t_users` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB AUTO_INCREMENT=4 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!50503 SET character_set_client = utf8mb4 */;
+CREATE TABLE `t_pay` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `payment_id` varchar(100) NOT NULL,
+  `amount` decimal(10,2) NOT NULL,
+  `currency` varchar(3) NOT NULL DEFAULT 'eur',
+  `status` varchar(20) NOT NULL,
+  `customer_email` varchar(255) DEFAULT NULL,
+  `customer_name` varchar(255) DEFAULT NULL,
+  `payment_method` varchar(50) DEFAULT NULL,
+  `description` text,
+  `metadata` text,
+  `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  `receipt_url` varchar(512) DEFAULT NULL,
+  `refunded` tinyint(1) DEFAULT '0',
+  `refund_reason` text,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `payment_id` (`payment_id`),
+  KEY `idx_payment_id` (`payment_id`),
+  KEY `idx_status` (`status`),
+  KEY `idx_customer_email` (`customer_email`)
+) ENGINE=InnoDB AUTO_INCREMENT=8 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!50503 SET character_set_client = utf8mb4 */;
+CREATE TABLE `t_query` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `name` varchar(100) NOT NULL COMMENT 'Nome descrittivo della query',
+  `description` text COMMENT 'Descrizione dettagliata dello scopo della query',
+  `query_text` text NOT NULL COMMENT 'Testo della query SQL',
+  `category` varchar(50) DEFAULT NULL COMMENT 'Categoria/tipologia della query',
+  `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  `created_by` varchar(50) DEFAULT NULL COMMENT 'Utente che ha creato la query',
+  `last_executed_at` timestamp NULL DEFAULT NULL COMMENT 'Ultimo utilizzo della query',
+  `is_tab` tinyint(1) DEFAULT '0',
+  `tab_order` int DEFAULT '0',
+  PRIMARY KEY (`id`),
+  KEY `idx_category` (`category`),
+  KEY `idx_created_at` (`created_at`)
+) ENGINE=InnoDB AUTO_INCREMENT=18 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='Archivio delle query SQL per il report ROL';
+/*!40101 SET character_set_client = @saved_cs_client */;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!50503 SET character_set_client = utf8mb4 */;
+CREATE TABLE `t_reports` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `table_name` varchar(64) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `description` text COLLATE utf8mb4_unicode_ci,
+  `sql_query` text COLLATE utf8mb4_unicode_ci NOT NULL,
+  `query_prompt` text COLLATE utf8mb4_unicode_ci,
+  `can_read` tinyint(1) DEFAULT '1',
+  `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `table_name` (`table_name`)
+) ENGINE=InnoDB AUTO_INCREMENT=3 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!50503 SET character_set_client = utf8mb4 */;
+CREATE TABLE `t_table` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `table_name` varchar(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
+  `description` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
+  `group_id` int NOT NULL DEFAULT '1',
+  `can_read` tinyint(1) DEFAULT '1',
+  `can_write` tinyint(1) DEFAULT '1',
+  `can_delete` tinyint(1) DEFAULT '1',
+  `import_type` enum('raw','db') CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
+  `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `table_name` (`table_name`),
+  KEY `idx_group_id` (`group_id`),
+  KEY `idx_table_name` (`table_name`)
+) ENGINE=InnoDB AUTO_INCREMENT=26269 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!50503 SET character_set_client = utf8mb4 */;
+CREATE TABLE `t_table_perm` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `table_name` varchar(100) NOT NULL,
+  `description` varchar(255) NOT NULL,
+  `group_id` int NOT NULL,
+  `perm_level` int NOT NULL,
+  `active` tinyint(1) DEFAULT '1',
+  `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `unique_table_group_perm` (`table_name`,`group_id`,`perm_level`)
+) ENGINE=InnoDB AUTO_INCREMENT=9 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!50503 SET character_set_client = utf8mb4 */;
+CREATE TABLE `t_user_groups` (
+  `user_id` int NOT NULL,
+  `group_id` int NOT NULL,
+  PRIMARY KEY (`user_id`,`group_id`),
+  KEY `group_id` (`group_id`),
+  CONSTRAINT `t_user_groups_ibfk_1` FOREIGN KEY (`user_id`) REFERENCES `t_users` (`id`) ON DELETE CASCADE,
+  CONSTRAINT `t_user_groups_ibfk_2` FOREIGN KEY (`group_id`) REFERENCES `t_groups` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!50503 SET character_set_client = utf8mb4 */;
+CREATE TABLE `t_users` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `username` varchar(50) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
+  `password` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
+  `email` varchar(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
+  `full_name` varchar(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `is_active` tinyint(1) DEFAULT '1',
+  `last_login` datetime DEFAULT NULL,
+  `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `username` (`username`),
+  UNIQUE KEY `email` (`email`),
+  KEY `idx_users_username` (`username`),
+  KEY `idx_users_email` (`email`)
+) ENGINE=InnoDB AUTO_INCREMENT=770 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!50503 SET character_set_client = utf8mb4 */;
+CREATE TABLE `t_viste` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `table_name` varchar(255) NOT NULL,
+  `group_id` int NOT NULL DEFAULT '1',
+  `description` text,
+  `sql_query` text,
+  `query_prompt` text,
+  `can_read` tinyint(1) DEFAULT '1',
+  `can_write` tinyint(1) DEFAULT '0',
+  `can_delete` tinyint(1) DEFAULT '0',
+  `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `unique_table_group` (`table_name`,`group_id`)
+) ENGINE=InnoDB AUTO_INCREMENT=48 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!50503 SET character_set_client = utf8mb4 */;
+CREATE TABLE `territorio` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `nome` varchar(255) NOT NULL,
+  PRIMARY KEY (`id`)
+) ENGINE=InnoDB AUTO_INCREMENT=32 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!50503 SET character_set_client = utf8mb4 */;
+CREATE TABLE `tipologie_tessere` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `nome_tessera` varchar(50) NOT NULL,
+  `importo` decimal(10,2) NOT NULL,
+  PRIMARY KEY (`id`)
+) ENGINE=InnoDB AUTO_INCREMENT=5 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;

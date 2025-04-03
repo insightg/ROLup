@@ -1,0 +1,2832 @@
+
+# ====== File: /var/www/html/insightg/wup/r_wup/src/components/modules/Anagrafica/index.jsx ======
+import React, { useState } from 'react';
+import { Box, Tabs, Tab, Paper, useTheme } from '@mui/material';
+import ImportSection from './ImportSection';
+import DataTable from './DataTable';
+
+const Anagrafica = () => {
+    const [activeTab, setActiveTab] = useState(0);
+    const theme = useTheme();
+
+    const handleTabChange = (event, newValue) => {
+        setActiveTab(newValue);
+    };
+
+    return (
+        <Box
+            sx={{
+                display: 'flex',
+                flexDirection: 'column',
+                height: '100%',
+                width: '100%',
+                overflow: 'hidden'
+            }}
+        >
+            {/* Tabs Navigation */}
+            <Box sx={{ borderBottom: 1, borderColor: 'divider', bgcolor: 'background.paper' }}>
+                <Tabs
+                    value={activeTab}
+                    onChange={handleTabChange}
+                    aria-label="anagrafica tabs"
+                    indicatorColor="primary"
+                    textColor="primary"
+                >
+                    <Tab label="VISUALIZZA DATI" id="tab-0" />
+                    <Tab label="IMPORTA" id="tab-1" />
+                </Tabs>
+            </Box>
+
+            {/* Tab Content */}
+            <Box
+                sx={{
+                    flexGrow: 1,
+                    display: 'flex',
+                    overflow: 'hidden',
+                    bgcolor: 'background.default'
+                }}
+            >
+                {/* I componenti sono nascosti invece che smontati per preservare lo stato */}
+                <Box
+                    role="tabpanel"
+                    hidden={activeTab !== 0}
+                    id="tabpanel-0"
+                    aria-labelledby="tab-0"
+                    sx={{ 
+                        width: '100%', 
+                        height: '100%', 
+                        display: activeTab !== 0 ? 'none' : 'flex' 
+                    }}
+                >
+                    <DataTable />
+                </Box>
+                
+                <Box
+                    role="tabpanel"
+                    hidden={activeTab !== 1}
+                    id="tabpanel-1"
+                    aria-labelledby="tab-1"
+                    sx={{ 
+                        width: '100%', 
+                        height: '100%',
+                        display: activeTab !== 1 ? 'none' : 'flex'
+                    }}
+                >
+                    <ImportSection />
+                </Box>
+            </Box>
+        </Box>
+    );
+};
+
+export default Anagrafica;
+
+
+# ====== File: /var/www/html/insightg/wup/r_wup/src/components/modules/Anagrafica/RecordDetail.jsx ======
+import React, { useState, useEffect } from 'react';
+import {
+    Dialog,
+    DialogTitle,
+    DialogContent,
+    DialogActions,
+    Button,
+    Box,
+    Grid,
+    TextField,
+    CircularProgress,
+    Alert,
+    Typography,
+    Tab,
+    Tabs,
+    IconButton,
+    Divider,
+    Paper
+} from '@mui/material';
+import {
+    Save as SaveIcon,
+    Delete as DeleteIcon,
+    Close as CloseIcon,
+    Edit as EditIcon
+} from '@mui/icons-material';
+import anagraficaApi from '../../../api/anagraficaApi';
+
+// Definizione campi del modulo, organizzati per tab
+const FORM_FIELDS = {
+    generali: [
+        { field: 'id', label: 'ID', readOnly: true },
+        { field: 'nome_account', label: 'Nome Account', required: true },
+        { field: 'sf_region', label: 'SF Region' },
+        { field: 'sf_district', label: 'SF District' },
+        { field: 'sf_territory', label: 'SF Territory' },
+        { field: 'tipo_di_record_account', label: 'Tipo di Record Account' },
+        { field: 'rrp_segment', label: 'RRP Segment' },
+        { field: 'trade', label: 'Trade' }
+    ],
+    contatti: [
+        { field: 'cap_spedizioni', label: 'CAP Spedizioni' },
+        { field: 'statoprovincia_spedizioni', label: 'Stato/Provincia Spedizioni' },
+        { field: 'citt_spedizioni', label: 'Città Spedizioni' },
+        { field: 'indirizzo_spedizioni', label: 'Indirizzo Spedizioni' },
+        { field: 'telefono', label: 'Telefono' },
+        { field: 'mobile', label: 'Mobile' },
+        { field: 'email', label: 'Email', type: 'email' }
+    ],
+    rappresentanti: [
+        { field: 'field_rep', label: 'Field Rep' },
+        { field: 'numero_field_rep', label: 'Numero Field Rep' },
+        { field: 'supervisor', label: 'Supervisor' },
+        { field: 'numero_supervisor', label: 'Numero Supervisor' }
+    ]
+};
+
+const RecordDetail = ({ open, onClose, record }) => {
+    const [formData, setFormData] = useState({});
+    const [isEditing, setIsEditing] = useState(false);
+    const [isLoading, setIsLoading] = useState(false);
+    const [error, setError] = useState(null);
+    const [activeTab, setActiveTab] = useState(0);
+    const [validationErrors, setValidationErrors] = useState({});
+    const [deleteConfirm, setDeleteConfirm] = useState(false);
+
+    // Tabs configuration
+    const tabs = [
+        { label: 'Informazioni Generali', fields: FORM_FIELDS.generali },
+        { label: 'Informazioni di Contatto', fields: FORM_FIELDS.contatti },
+        { label: 'Rappresentanti', fields: FORM_FIELDS.rappresentanti }
+    ];
+
+    // Initialize form data when record changes
+    useEffect(() => {
+        if (record) {
+            setFormData({ ...record });
+        }
+    }, [record]);
+
+    // Handle tab change
+    const handleTabChange = (event, newValue) => {
+        setActiveTab(newValue);
+    };
+
+    // Handle form input changes
+    const handleInputChange = (e) => {
+        const { name, value } = e.target;
+        setFormData(prev => ({
+            ...prev,
+            [name]: value
+        }));
+        
+        // Reset validation error for this field
+        if (validationErrors[name]) {
+            setValidationErrors(prev => ({
+                ...prev,
+                [name]: null
+            }));
+        }
+    };
+
+    // Validate form
+    const validateForm = () => {
+        const errors = {};
+        
+        // Validate required fields
+        const allFields = [...FORM_FIELDS.generali, ...FORM_FIELDS.contatti, ...FORM_FIELDS.rappresentanti];
+        allFields.forEach(field => {
+            if (field.required && !formData[field.field]) {
+                errors[field.field] = 'Campo obbligatorio';
+            }
+        });
+        
+        // Validate email format
+        if (formData.email && !/^\S+@\S+\.\S+$/.test(formData.email)) {
+            errors.email = 'Formato email non valido';
+        }
+        
+        setValidationErrors(errors);
+        return Object.keys(errors).length === 0;
+    };
+
+    // Save record
+    const handleSave = async () => {
+        if (!validateForm()) {
+            return;
+        }
+        
+        try {
+            setIsLoading(true);
+            setError(null);
+            
+            const response = await anagraficaApi.updateRecord(formData.id, formData);
+            
+            if (response.data.success) {
+                setIsEditing(false);
+                onClose(true); // Refresh data after update
+            } else {
+                throw new Error(response.data.message || 'Errore durante il salvataggio');
+            }
+        } catch (err) {
+            console.error('Error saving record:', err);
+            setError(err.message || 'Si è verificato un errore durante il salvataggio');
+        } finally {
+            setIsLoading(false);
+        }
+    };
+
+    // Delete record
+    const handleDelete = async () => {
+        try {
+            setIsLoading(true);
+            setError(null);
+            
+            const response = await anagraficaApi.deleteRecord(formData.id);
+            
+            if (response.data.success) {
+                onClose(true); // Refresh data after delete
+            } else {
+                throw new Error(response.data.message || 'Errore durante l\'eliminazione');
+            }
+        } catch (err) {
+            console.error('Error deleting record:', err);
+            setError(err.message || 'Si è verificato un errore durante l\'eliminazione');
+        } finally {
+            setIsLoading(false);
+            setDeleteConfirm(false);
+        }
+    };
+
+    return (
+        <Dialog
+            open={open}
+            onClose={() => {
+                setIsEditing(false);
+                setDeleteConfirm(false);
+                onClose(false);
+            }}
+            fullWidth
+            maxWidth="md"
+            PaperProps={{
+                sx: { height: '80vh' }
+            }}
+        >
+            <DialogTitle sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', p: 2 }}>
+                <Typography variant="h6">
+                    {isEditing ? 'Modifica Record' : 'Dettagli Record'}
+                </Typography>
+                <IconButton
+                    onClick={() => {
+                        setIsEditing(false);
+                        setDeleteConfirm(false);
+                        onClose(false);
+                    }}
+                    size="small"
+                >
+                    <CloseIcon fontSize="small" />
+                </IconButton>
+            </DialogTitle>
+            
+            <Divider />
+            
+            <Box sx={{ borderBottom: 1, borderColor: 'divider' }}>
+                <Tabs 
+                    value={activeTab} 
+                    onChange={handleTabChange} 
+                    aria-label="record detail tabs"
+                    variant="scrollable"
+                    scrollButtons="auto"
+                >
+                    {tabs.map((tab, index) => (
+                        <Tab key={index} label={tab.label} />
+                    ))}
+                </Tabs>
+            </Box>
+            
+            <DialogContent sx={{ p: 3, display: 'flex', flexDirection: 'column' }}>
+                {error && (
+                    <Alert severity="error" sx={{ mb: 3 }}>
+                        {error}
+                    </Alert>
+                )}
+                
+                {deleteConfirm && (
+                    <Paper variant="outlined" sx={{ p: 2, mb: 3, bgcolor: '#fff8f8' }}>
+                        <Typography variant="subtitle1" color="error" gutterBottom>
+                            Conferma eliminazione
+                        </Typography>
+                        <Typography variant="body2" paragraph>
+                            Sei sicuro di voler eliminare questo record? L'operazione non può essere annullata.
+                        </Typography>
+                        <Box sx={{ display: 'flex', justifyContent: 'flex-end', gap: 1 }}>
+                            <Button 
+                                variant="outlined" 
+                                onClick={() => setDeleteConfirm(false)}
+                                disabled={isLoading}
+                            >
+                                Annulla
+                            </Button>
+                            <Button 
+                                variant="contained" 
+                                color="error"
+                                onClick={handleDelete}
+                                disabled={isLoading}
+                                startIcon={isLoading ? <CircularProgress size={20} /> : <DeleteIcon />}
+                            >
+                                Elimina
+                            </Button>
+                        </Box>
+                    </Paper>
+                )}
+                
+                {tabs.map((tab, tabIndex) => (
+                    <Box
+                        key={tabIndex}
+                        role="tabpanel"
+                        hidden={activeTab !== tabIndex}
+                        id={`tabpanel-${tabIndex}`}
+                        aria-labelledby={`tab-${tabIndex}`}
+                        sx={{ flexGrow: 1, overflow: 'auto' }}
+                    >
+                        {activeTab === tabIndex && (
+                            <Grid container spacing={2}>
+                                {tab.fields.map(field => (
+                                    <Grid item xs={12} sm={6} key={field.field}>
+                                        <TextField
+                                            name={field.field}
+                                            label={field.label}
+                                            value={formData[field.field] || ''}
+                                            onChange={handleInputChange}
+                                            fullWidth
+                                            margin="normal"
+                                            variant="outlined"
+                                            disabled={!isEditing || field.readOnly || isLoading}
+                                            required={field.required}
+                                            error={!!validationErrors[field.field]}
+                                            helperText={validationErrors[field.field]}
+                                            type={field.type || 'text'}
+                                            InputProps={{
+                                                readOnly: !isEditing || field.readOnly
+                                            }}
+                                        />
+                                    </Grid>
+                                ))}
+                            </Grid>
+                        )}
+                    </Box>
+                ))}
+            </DialogContent>
+            
+            <DialogActions sx={{ px: 3, py: 2, borderTop: '1px solid', borderColor: 'divider' }}>
+                {isEditing ? (
+                    <>
+                        <Button 
+                            onClick={() => setIsEditing(false)} 
+                            disabled={isLoading}
+                        >
+                            Annulla
+                        </Button>
+                        <Button
+                            startIcon={<DeleteIcon />}
+                            color="error"
+                            onClick={() => setDeleteConfirm(true)}
+                            disabled={isLoading}
+                        >
+                            Elimina
+                        </Button>
+                        <Button
+                            startIcon={isLoading ? <CircularProgress size={24} /> : <SaveIcon />}
+                            variant="contained"
+                            color="primary"
+                            onClick={handleSave}
+                            disabled={isLoading}
+                        >
+                            Salva
+                        </Button>
+                    </>
+                ) : (
+                    <>
+                        <Button 
+                            onClick={() => onClose(false)}
+                        >
+                            Chiudi
+                        </Button>
+                        <Button
+                            startIcon={<EditIcon />}
+                            variant="contained"
+                            color="primary"
+                            onClick={() => setIsEditing(true)}
+                        >
+                            Modifica
+                        </Button>
+                    </>
+                )}
+            </DialogActions>
+        </Dialog>
+    );
+};
+
+export default RecordDetail;
+
+
+# ====== File: /var/www/html/insightg/wup/r_wup/src/components/modules/Anagrafica/ColumnVisibilityMenu.jsx ======
+import React, { useState, useEffect } from 'react';
+import {
+    Dialog,
+    DialogTitle,
+    DialogContent,
+    DialogActions,
+    Button,
+    Box,
+    Checkbox,
+    FormControlLabel,
+    List,
+    ListItem,
+    Typography,
+    Divider,
+    IconButton,
+    Paper,
+    InputBase,
+    Tooltip,
+    Switch
+} from '@mui/material';
+import {
+    DragIndicator as DragIcon,
+    VisibilityOff as HideAllIcon,
+    Visibility as ShowAllIcon,
+    Search as SearchIcon,
+    Clear as ClearIcon
+} from '@mui/icons-material';
+import { DndProvider, useDrag, useDrop } from 'react-dnd';
+import { HTML5Backend } from 'react-dnd-html5-backend';
+
+// Elemento draggabile per riordinare le colonne
+const DraggableColumnItem = ({ column, index, moveColumn, onToggleVisibility }) => {
+    const [{ isDragging }, drag, preview] = useDrag({
+        type: 'column',
+        item: { index },
+        collect: (monitor) => ({
+            isDragging: !!monitor.isDragging(),
+        }),
+    });
+
+    const [, drop] = useDrop({
+        accept: 'column',
+        hover: (item, monitor) => {
+            if (item.index === index) {
+                return;
+            }
+            moveColumn(item.index, index);
+            item.index = index;
+        },
+    });
+
+    return (
+        <div
+            ref={(node) => drop(preview(node))}
+            style={{
+                opacity: isDragging ? 0.5 : 1,
+                cursor: 'move',
+            }}
+        >
+            <ListItem
+                sx={{
+                    borderBottom: '1px solid #eee',
+                    '&:hover': { backgroundColor: '#f5f5f5' },
+                    p: 1
+                }}
+            >
+                <Box sx={{ display: 'flex', alignItems: 'center', width: '100%' }}>
+                    <div ref={drag}>
+                        <DragIcon sx={{ cursor: 'grab', mr: 1, color: 'grey.500' }} />
+                    </div>
+                    <FormControlLabel
+                        control={
+                            <Checkbox
+                                checked={column.getIsVisible()}
+                                onChange={onToggleVisibility}
+                                name={column.id}
+                                disabled={column.id === 'selection'}
+                            />
+                        }
+                        label={
+                            <Box>
+                                <Typography
+                                    variant="body2"
+                                    sx={{
+                                        fontWeight: column.getIsVisible() ? 'bold' : 'normal',
+                                    }}
+                                >
+                                    {column.columnDef.header || column.id}
+                                </Typography>
+                                {column.id === 'selection' && (
+                                    <Typography variant="caption" color="text.secondary">
+                                        (Colonna di sistema)
+                                    </Typography>
+                                )}
+                            </Box>
+                        }
+                        sx={{ flex: 1 }}
+                    />
+                </Box>
+            </ListItem>
+        </div>
+    );
+};
+
+const ColumnVisibilityMenu = ({ open, onClose, table }) => {
+    const [columns, setColumns] = useState(() => table.getAllLeafColumns());
+    const [searchTerm, setSearchTerm] = useState('');
+    const [showOnlyVisible, setShowOnlyVisible] = useState(false);
+
+    // Aggiorna le colonne quando il componente si apre
+    useEffect(() => {
+        if (open) {
+            setColumns(table.getAllLeafColumns());
+        }
+    }, [open, table]);
+
+    // Gestisci lo spostamento delle colonne (riordinamento)
+    const moveColumn = (fromIndex, toIndex) => {
+        const newColumns = [...columns];
+        const [movedColumn] = newColumns.splice(fromIndex, 1);
+        newColumns.splice(toIndex, 0, movedColumn);
+        setColumns(newColumns);
+    };
+
+    // Toggle visibilità di una singola colonna
+    const handleToggleColumnVisibility = (columnId) => {
+        table.getColumn(columnId)?.toggleVisibility();
+    };
+
+    // Mostra tutte le colonne
+    const handleShowAllColumns = () => {
+        table.toggleAllColumnsVisible(true);
+    };
+
+    // Nascondi tutte le colonne eccetto la prima (selezione)
+    const handleHideAllColumns = () => {
+        const selectionColumn = table.getColumn('selection');
+        
+        // Nascondi tutte le colonne
+        table.toggleAllColumnsVisible(false);
+        
+        // Mostra solo la colonna di selezione
+        if (selectionColumn) {
+            selectionColumn.toggleVisibility(true);
+        }
+    };
+
+    // Applica le modifiche all'ordine delle colonne
+    const handleApplyColumnOrder = () => {
+        table.setColumnOrder(columns.map(column => column.id));
+        onClose();
+    };
+
+    // Filtra le colonne in base al termine di ricerca
+    const filteredColumns = columns.filter(column => {
+        // Filtra in base alla ricerca
+        const matchesSearch = searchTerm === '' || 
+            (column.columnDef.header && column.columnDef.header.toString().toLowerCase().includes(searchTerm.toLowerCase()));
+        
+        // Applica il filtro "solo visibili" se attivo
+        const matchesVisibility = !showOnlyVisible || column.getIsVisible();
+        
+        return matchesSearch && matchesVisibility;
+    });
+
+    // Numero di colonne visibili
+    const visibleCount = columns.filter(col => col.getIsVisible()).length;
+    const totalColumns = columns.length;
+
+    return (
+        <Dialog open={open} onClose={onClose} maxWidth="sm" fullWidth>
+            <DialogTitle sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', p: 2 }}>
+                <Typography variant="h6">Gestione Colonne</Typography>
+                <Typography variant="body2" color="text.secondary">
+                    {visibleCount} di {totalColumns} colonne visibili
+                </Typography>
+            </DialogTitle>
+            
+            <Divider />
+            
+            <DialogContent sx={{ p: 2 }}>
+                <Typography variant="body2" color="text.secondary" gutterBottom>
+                    Trascina per riordinare le colonne. Seleziona o deseleziona le caselle per mostrare o nascondere le colonne.
+                </Typography>
+                
+                <Paper 
+                    component="form" 
+                    sx={{ 
+                        p: '2px 4px', 
+                        display: 'flex', 
+                        alignItems: 'center', 
+                        mb: 2, 
+                        mt: 1
+                    }}
+                >
+                    <SearchIcon sx={{ color: 'action.active', ml: 1, mr: 1 }} />
+                    <InputBase
+                        sx={{ ml: 1, flex: 1 }}
+                        placeholder="Cerca colonne..."
+                        value={searchTerm}
+                        onChange={(e) => setSearchTerm(e.target.value)}
+                    />
+                    {searchTerm && (
+                        <IconButton 
+                            size="small" 
+                            onClick={() => setSearchTerm('')}
+                            sx={{ p: '10px' }}
+                        >
+                            <ClearIcon />
+                        </IconButton>
+                    )}
+                </Paper>
+                
+                <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1 }}>
+                    <Box>
+                        <Button
+                            size="small"
+                            startIcon={<ShowAllIcon />}
+                            onClick={handleShowAllColumns}
+                            sx={{ mr: 1 }}
+                            variant="outlined"
+                        >
+                            Mostra Tutte
+                        </Button>
+                        <Button
+                            size="small"
+                            startIcon={<HideAllIcon />}
+                            onClick={handleHideAllColumns}
+                            variant="outlined"
+                        >
+                            Nascondi Tutte
+                        </Button>
+                    </Box>
+                    
+                    <FormControlLabel
+                        control={
+                            <Switch
+                                checked={showOnlyVisible}
+                                onChange={(e) => setShowOnlyVisible(e.target.checked)}
+                                size="small"
+                            />
+                        }
+                        label={
+                            <Typography variant="body2">
+                                Solo colonne visibili
+                            </Typography>
+                        }
+                    />
+                </Box>
+                
+                <Divider sx={{ my: 1 }} />
+
+                <DndProvider backend={HTML5Backend}>
+                    <List sx={{ 
+                        maxHeight: '50vh', 
+                        overflow: 'auto', 
+                        bgcolor: 'background.paper',
+                        border: '1px solid #eee',
+                        borderRadius: 1
+                    }}>
+                        {filteredColumns.map((column, index) => (
+                            <DraggableColumnItem
+                                key={column.id}
+                                column={column}
+                                index={index}
+                                moveColumn={moveColumn}
+                                onToggleVisibility={() => handleToggleColumnVisibility(column.id)}
+                            />
+                        ))}
+                        
+                        {filteredColumns.length === 0 && (
+                            <ListItem>
+                                <Typography color="text.secondary" align="center" sx={{ width: '100%', py: 2 }}>
+                                    Nessuna colonna trovata con i criteri di ricerca attuali
+                                </Typography>
+                            </ListItem>
+                        )}
+                    </List>
+                </DndProvider>
+            </DialogContent>
+            
+            <Divider />
+            
+            <DialogActions sx={{ p: 2 }}>
+                <Button onClick={onClose}>Annulla</Button>
+                <Button variant="contained" onClick={handleApplyColumnOrder}>
+                    Applica
+                </Button>
+            </DialogActions>
+        </Dialog>
+    );
+};
+
+export default ColumnVisibilityMenu;
+
+
+# ====== File: /var/www/html/insightg/wup/r_wup/src/components/modules/Anagrafica/DataTable.jsx ======
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import {
+  Box,
+  Paper,
+  IconButton,
+  TextField,
+  InputAdornment,
+  Alert,
+  CircularProgress,
+  Table,
+  TableBody,
+  TableCell,
+  TableContainer,
+  TableHead,
+  TableRow,
+  Typography,
+  Badge,
+  Tooltip,
+  Checkbox,
+  Button,
+  Menu,
+  MenuItem
+} from '@mui/material';
+import { 
+  Search as SearchIcon, 
+  Refresh as RefreshIcon, 
+  FilterList as FilterIcon, 
+  Visibility as VisibilityIcon 
+} from '@mui/icons-material';
+import { 
+  useReactTable, 
+  getCoreRowModel, 
+  getFilteredRowModel, 
+  getPaginationRowModel, 
+  getSortedRowModel, 
+  flexRender 
+} from '@tanstack/react-table';
+import { useDebouncedCallback } from 'use-debounce';
+import FilterDialog from './FilterDialog';
+import RecordDetail from './RecordDetail';
+import anagraficaApi from '../../../api/anagraficaApi';
+import ColumnVisibilityMenu from './ColumnVisibilityMenu';
+
+const DataTable = () => {
+  // Stati per dati, filtri, paginazione, ecc.
+  const [data, setData] = useState([]);
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState(null);
+  const [globalFilter, setGlobalFilter] = useState('');
+  const [columnFilters, setColumnFilters] = useState([]);
+  const [isFilterDialogOpen, setIsFilterDialogOpen] = useState(false);
+  const [isDetailOpen, setIsDetailOpen] = useState(false);
+  const [selectedRecord, setSelectedRecord] = useState(null);
+  const [isColumnVisibilityDialogOpen, setIsColumnVisibilityDialogOpen] = useState(false);
+  const [totalRecords, setTotalRecords] = useState(0);
+  const [filteredRecords, setFilteredRecords] = useState(0);
+  const [pagination, setPagination] = useState({
+    pageIndex: 0,
+    pageSize: 25
+  });
+  const [sorting, setSorting] = useState([]);
+  // Stato per la gestione degli ID selezionati
+  const [selectedIds, setSelectedIds] = useState([]);
+  // Stato per l'ancora del menu delle azioni sui record selezionati
+  const [actionMenuAnchor, setActionMenuAnchor] = useState(null);
+
+  // Funzione per recuperare i dati con supporto per filtri, ordinamento e paginazione lato server
+  const fetchData = async (options = {}) => {
+    setIsLoading(true);
+    setError(null);
+
+    // Determina la direzione e il campo per l'ordinamento
+    let sortDir = 'asc';
+    let sortBy = 'id';
+    if (options.sorting?.length > 0) {
+      sortDir = options.sorting[0].desc ? 'desc' : 'asc';
+      sortBy = options.sorting[0].id;
+    }
+
+    const params = {
+      page: (options.pagination?.pageIndex || 0) + 1,
+      pageSize: options.pagination?.pageSize || 25,
+      sortBy: sortBy,
+      sortDir: sortDir,
+      search: options.globalFilter || '',
+      filters: options.columnFilters ? JSON.stringify(options.columnFilters) : ''
+    };
+
+    try {
+      console.log("Fetching data with params:", params);
+      const response = await anagraficaApi.getData(params);
+      setData(response.data.data || []);
+      setTotalRecords(response.data.total || 0);
+      setFilteredRecords(response.data.total || 0);
+      return {
+        data: response.data.data || [],
+        totalRecords: response.data.total || 0,
+        pageCount: response.data.pages || 0
+      };
+    } catch (err) {
+      console.error('Errore recupero dati:', err);
+      setError(err.message || 'Errore nel recupero dei dati');
+      return { data: [], totalRecords: 0, pageCount: 0 };
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  // Funzione per recuperare tutti gli ID dei record filtrati
+  const fetchAllIds = async () => {
+    const params = {
+      search: globalFilter || '',
+      filters: columnFilters ? JSON.stringify(columnFilters) : '',
+    };
+    try {
+      const response = await anagraficaApi.getAllIds(params);
+      // Si assume che la response restituisca un array di ID in response.data.ids
+      return response.data.ids;
+    } catch (err) {
+      console.error('Errore nel recupero di tutti gli ID:', err);
+      return [];
+    }
+  };
+
+  // Caricamento dati al variare di paginazione, ordinamento o filtri
+  useEffect(() => {
+    const loadData = async () => {
+      console.log("Fetching data with sorting:", sorting);
+      await fetchData({
+        pagination,
+        sorting,
+        globalFilter,
+        columnFilters
+      });
+    };
+    loadData();
+  }, [pagination.pageIndex, pagination.pageSize, JSON.stringify(sorting), globalFilter, JSON.stringify(columnFilters)]);
+
+  // Gestione della chiusura del dettaglio record
+  const handleDetailClose = (refreshData = false) => {
+    setIsDetailOpen(false);
+    setSelectedRecord(null);
+    if (refreshData) {
+      fetchData({
+        pagination,
+        sorting,
+        globalFilter,
+        columnFilters
+      });
+    }
+  };
+
+  // Aggiornamento manuale dei dati
+  const handleRefresh = () => {
+    fetchData({
+      pagination,
+      sorting,
+      globalFilter,
+      columnFilters
+    });
+  };
+
+  // Gestione della selezione di una singola riga
+  const handleRowSelection = (id, isSelected, e) => {
+    e.stopPropagation();
+    setSelectedIds(prev => {
+      if (isSelected) {
+        return [...prev, id];
+      } else {
+        return prev.filter(item => item !== id);
+      }
+    });
+  };
+
+  // Gestione del "select all" per tutti i record filtrati (o dell'intera tabella)
+  const handleSelectAll = async (isSelected) => {
+    if (isSelected) {
+      const allIds = await fetchAllIds();
+      setSelectedIds(allIds);
+    } else {
+      setSelectedIds([]);
+    }
+  };
+
+  // Funzione per la gestione dell'ordinamento al click sull'intestazione della colonna
+  const handleSortingClick = useCallback((columnId) => {
+    const toggleSort = (currentSort) => {
+      if (!currentSort.length) {
+        return [{ id: columnId, desc: false }];
+      } else if (currentSort[0].id === columnId) {
+        if (currentSort[0].desc === false) {
+          return [{ id: columnId, desc: true }];
+        } else {
+          return [];
+        }
+      } else {
+        return [{ id: columnId, desc: false }];
+      }
+    };
+    setSorting(current => toggleSort(current));
+  }, []);
+
+  // Funzione per aprire il menu delle azioni sui record selezionati
+  const handleActionMenuOpen = (event) => {
+    setActionMenuAnchor(event.currentTarget);
+  };
+
+  // Funzione per chiudere il menu delle azioni
+  const handleActionMenuClose = () => {
+    setActionMenuAnchor(null);
+  };
+
+  // Esempio di funzione per gestire una specifica azione sui record selezionati
+  const handleSelectedAction = () => {
+    // Personalizza qui le azioni da eseguire sui record selezionati
+    alert(`Eseguo azione su record: ${selectedIds.join(", ")}`);
+  };
+
+  // Debounce per la ricerca globale
+  const debouncedSetGlobalFilter = useDebouncedCallback(value => {
+    setGlobalFilter(value);
+    // Resetta alla prima pagina al cambiare la ricerca
+    setPagination(old => ({ ...old, pageIndex: 0 }));
+  }, 500);
+
+  const hasActiveFilters = columnFilters.length > 0 || globalFilter.trim() !== '';
+
+  // Definizione delle colonne, inclusa quella per la selezione
+  const columns = useMemo(
+    () => [
+      {
+        id: 'selection',
+        header: ({ table }) => {
+          // In questo caso, consideriamo "tutti" i record filtrati
+          const allSelected = selectedIds.length === filteredRecords && filteredRecords > 0;
+          return (
+            <Checkbox
+              checked={allSelected}
+              onChange={(e) => handleSelectAll(e.target.checked)}
+              onClick={(e) => e.stopPropagation()}
+            />
+          );
+        },
+        cell: ({ row }) => {
+          const isSelected = selectedIds.includes(row.original.id);
+          return (
+            <Checkbox
+              checked={isSelected}
+              onChange={(e) => handleRowSelection(row.original.id, e.target.checked, e)}
+              onClick={(e) => e.stopPropagation()}
+            />
+          );
+        },
+        size: 60,
+      },
+      {
+        id: 'actions',
+        header: 'Azioni',
+        cell: ({ row }) => (
+          <IconButton
+            onClick={(e) => {
+              e.stopPropagation();
+              setSelectedRecord(row.original);
+              setIsDetailOpen(true);
+            }}
+            size="small"
+          >
+            <VisibilityIcon fontSize="small" />
+          </IconButton>
+        ),
+        enableSorting: false,
+        enableHiding: false,
+        size: 60,
+      },
+      {
+        accessorKey: 'id',
+        header: 'ID',
+        size: 70,
+        enableResizing: true,
+      },
+      {
+        accessorKey: 'nome_account',
+        header: 'Nome Account',
+        size: 200,
+        enableResizing: true,
+        cell: info => (
+          <div style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: "200px" }}>
+            <Tooltip title={info.getValue()}>
+              <span>{info.getValue()}</span>
+            </Tooltip>
+          </div>
+        )
+      },
+      {
+        accessorKey: 'sf_region',
+        header: 'SF Region',
+        size: 150,
+        enableResizing: true,
+        cell: info => (
+          <div style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+            <Tooltip title={info.getValue() || ''}>
+              <span>{info.getValue() || ''}</span>
+            </Tooltip>
+          </div>
+        )
+      },
+      {
+        accessorKey: 'sf_district',
+        header: 'SF District',
+        size: 150,
+        enableResizing: true,
+        cell: info => (
+          <div style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+            <Tooltip title={info.getValue() || ''}>
+              <span>{info.getValue() || ''}</span>
+            </Tooltip>
+          </div>
+        )
+      },
+      {
+        accessorKey: 'sf_territory',
+        header: 'SF Territory',
+        size: 150,
+        enableResizing: true,
+        cell: info => (
+          <div style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+            <Tooltip title={info.getValue() || ''}>
+              <span>{info.getValue() || ''}</span>
+            </Tooltip>
+          </div>
+        )
+      },
+      {
+        accessorKey: 'tipo_di_record_account',
+        header: 'Tipo di Record Account',
+        size: 180,
+        enableResizing: true,
+        cell: info => (
+          <div style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+            <Tooltip title={info.getValue() || ''}>
+              <span>{info.getValue() || ''}</span>
+            </Tooltip>
+          </div>
+        )
+      },
+      {
+        accessorKey: 'rrp_segment',
+        header: 'RRP Segment',
+        size: 130,
+        enableResizing: true,
+        cell: info => (
+          <div style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+            <Tooltip title={info.getValue() || ''}>
+              <span>{info.getValue() || ''}</span>
+            </Tooltip>
+          </div>
+        )
+      },
+      {
+        accessorKey: 'trade',
+        header: 'Trade',
+        size: 120,
+        enableResizing: true,
+        cell: info => (
+          <div style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+            <Tooltip title={info.getValue() || ''}>
+              <span>{info.getValue() || ''}</span>
+            </Tooltip>
+          </div>
+        )
+      },
+      {
+        accessorKey: 'cap_spedizioni',
+        header: 'CAP Spedizioni',
+        size: 120,
+        enableResizing: true,
+        cell: info => (
+          <div style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+            <Tooltip title={info.getValue() || ''}>
+              <span>{info.getValue() || ''}</span>
+            </Tooltip>
+          </div>
+        )
+      },
+      {
+        accessorKey: 'statoprovincia_spedizioni',
+        header: 'Stato/Provincia Spedizioni',
+        size: 180,
+        enableResizing: true,
+        cell: info => (
+          <div style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+            <Tooltip title={info.getValue() || ''}>
+              <span>{info.getValue() || ''}</span>
+            </Tooltip>
+          </div>
+        )
+      },
+      {
+        accessorKey: 'citt_spedizioni',
+        header: 'Città Spedizioni',
+        size: 150,
+        enableResizing: true,
+        cell: info => (
+          <div style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+            <Tooltip title={info.getValue() || ''}>
+              <span>{info.getValue() || ''}</span>
+            </Tooltip>
+          </div>
+        )
+      },
+      {
+        accessorKey: 'indirizzo_spedizioni',
+        header: 'Indirizzo Spedizioni',
+        size: 200,
+        enableResizing: true,
+        cell: info => (
+          <div style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+            <Tooltip title={info.getValue() || ''}>
+              <span>{info.getValue() || ''}</span>
+            </Tooltip>
+          </div>
+        )
+      },
+      {
+        accessorKey: 'telefono',
+        header: 'Telefono',
+        size: 120,
+        enableResizing: true,
+        cell: info => (
+          <div style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+            <Tooltip title={info.getValue() || ''}>
+              <span>{info.getValue() || ''}</span>
+            </Tooltip>
+          </div>
+        )
+      },
+      {
+        accessorKey: 'mobile',
+        header: 'Mobile',
+        size: 120,
+        enableResizing: true,
+        cell: info => (
+          <div style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+            <Tooltip title={info.getValue() || ''}>
+              <span>{info.getValue() || ''}</span>
+            </Tooltip>
+          </div>
+        )
+      },
+      {
+        accessorKey: 'email',
+        header: 'Email',
+        size: 180,
+        enableResizing: true,
+        cell: info => (
+          <div style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+            <Tooltip title={info.getValue() || ''}>
+              <span>{info.getValue() || ''}</span>
+            </Tooltip>
+          </div>
+        )
+      },
+      {
+        accessorKey: 'field_rep',
+        header: 'Field Rep',
+        size: 150,
+        enableResizing: true,
+        cell: info => (
+          <div style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+            <Tooltip title={info.getValue() || ''}>
+              <span>{info.getValue() || ''}</span>
+            </Tooltip>
+          </div>
+        )
+      },
+      {
+        accessorKey: 'numero_field_rep',
+        header: 'Numero Field Rep',
+        size: 150,
+        enableResizing: true,
+        cell: info => (
+          <div style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+            <Tooltip title={info.getValue() || ''}>
+              <span>{info.getValue() || ''}</span>
+            </Tooltip>
+          </div>
+        )
+      },
+      {
+        accessorKey: 'supervisor',
+        header: 'Supervisor',
+        size: 150,
+        enableResizing: true,
+        cell: info => (
+          <div style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+            <Tooltip title={info.getValue() || ''}>
+              <span>{info.getValue() || ''}</span>
+            </Tooltip>
+          </div>
+        )
+      },
+      {
+        accessorKey: 'numero_supervisor',
+        header: 'Numero Supervisor',
+        size: 150,
+        enableResizing: true,
+        cell: info => (
+          <div style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+            <Tooltip title={info.getValue() || ''}>
+              <span>{info.getValue() || ''}</span>
+            </Tooltip>
+          </div>
+        )
+      }
+    ],
+    [selectedIds, filteredRecords]
+  );
+
+  const table = useReactTable({
+    columns,
+    data,
+    pageCount: Math.ceil(totalRecords / pagination.pageSize),
+    state: {
+      pagination,
+      globalFilter,
+      columnFilters,
+      sorting
+    },
+    manualPagination: true,
+    manualSorting: true,
+    manualFiltering: true,
+    onPaginationChange: setPagination,
+    onSortingChange: setSorting,
+    onGlobalFilterChange: setGlobalFilter,
+    onColumnFiltersChange: setColumnFilters,
+    getCoreRowModel: getCoreRowModel(),
+    getFilteredRowModel: getFilteredRowModel(),
+    getSortedRowModel: getSortedRowModel(),
+    getPaginationRowModel: getPaginationRowModel(),
+    debugTable: false,
+  });
+
+  return (
+    <Box sx={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
+      {/* Toolbar */}
+      <Paper sx={{ p: 2, mb: 2, display: 'flex', alignItems: 'center' }}>
+        <TextField
+          size="small"
+          sx={{ mr: 2, width: 300 }}
+          value={globalFilter}
+          onChange={(e) => debouncedSetGlobalFilter(e.target.value)}
+          placeholder="Cerca..."
+          InputProps={{
+            startAdornment: (
+              <InputAdornment position="start">
+                <SearchIcon />
+              </InputAdornment>
+            )
+          }}
+        />
+        <Badge color="primary" variant="dot" invisible={!hasActiveFilters} overlap="circular">
+          <IconButton color={hasActiveFilters ? "primary" : "default"} sx={{ mr: 2 }} onClick={() => setIsFilterDialogOpen(true)} title="Filtri avanzati">
+            <FilterIcon />
+          </IconButton>
+        </Badge>
+        <IconButton color="primary" sx={{ mr: 2 }} onClick={() => setIsColumnVisibilityDialogOpen(true)} title="Gestione colonne">
+          <VisibilityIcon />
+        </IconButton>
+        <IconButton color="primary" onClick={handleRefresh} title="Aggiorna dati">
+          <RefreshIcon />
+        </IconButton>
+
+        {/* Bottone che mostra il contatore dei record selezionati e apre il menu per le azioni */}
+        {selectedIds.length > 0 && (
+          <Button variant="contained" color="secondary" onClick={handleActionMenuOpen} sx={{ ml: 2 }}>
+            {selectedIds.length} selezionati
+          </Button>
+        )}
+
+        <Box sx={{ flexGrow: 1 }} />
+
+        {hasActiveFilters && (
+          <Typography variant="body2" color="primary">
+            {filteredRecords} filtrati
+          </Typography>
+        )}
+      </Paper>
+
+      {/* Menu per le azioni sui record selezionati */}
+      <Menu
+        anchorEl={actionMenuAnchor}
+        open={Boolean(actionMenuAnchor)}
+        onClose={handleActionMenuClose}
+      >
+        <MenuItem onClick={() => { handleSelectedAction(); handleActionMenuClose(); }}>
+          Azione 1
+        </MenuItem>
+        <MenuItem onClick={() => { alert(`Azione 2 su: ${selectedIds.join(", ")}`); handleActionMenuClose(); }}>
+          Azione 2
+        </MenuItem>
+        {/* Aggiungi qui altre azioni se necessario */}
+      </Menu>
+
+      {/* Alert di errore */}
+      {error && (
+        <Alert severity="error" sx={{ mb: 2 }}>
+          {error}
+        </Alert>
+      )}
+
+      {/* Contenitore principale con la tabella */}
+      <Box sx={{ display: 'flex', flexDirection: 'column', flexGrow: 1, overflow: 'hidden' }}>
+        <Box sx={{ position: 'relative', flexGrow: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+          {isLoading && (
+            <Box sx={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(255, 255, 255, 0.7)', zIndex: 1000 }}>
+              <CircularProgress />
+            </Box>
+          )}
+
+          <TableContainer sx={{ 
+            flexGrow: 1, 
+            overflow: 'auto',
+            '&::-webkit-scrollbar': {
+              width: '8px',
+              height: '8px',
+            },
+            '&::-webkit-scrollbar-thumb': {
+              backgroundColor: 'rgba(0,0,0,0.2)',
+              borderRadius: '4px',
+            },
+            '&::-webkit-scrollbar-track': {
+              backgroundColor: 'rgba(0,0,0,0.05)',
+            }
+          }}>
+            <Table stickyHeader sx={{ tableLayout: 'fixed' }}>
+              <TableHead>
+                {table.getHeaderGroups().map(headerGroup => (
+                  <TableRow key={headerGroup.id}>
+                    {headerGroup.headers.map(header => (
+                      <TableCell
+                        key={header.id}
+                        sx={{
+                          padding: '8px',
+                          cursor: header.column.getCanSort() ? 'pointer' : 'default',
+                          backgroundColor: 'white',
+                          zIndex: 1,
+                          whiteSpace: 'nowrap',
+                          width: header.column.columnDef.size ? `${header.column.columnDef.size}px` : 'auto'
+                        }}
+                        onClick={() => {
+                          if (header.column.getCanSort()) {
+                            handleSortingClick(header.column.id);
+                          }
+                        }}
+                      >
+                        {flexRender(header.column.columnDef.header, header.getContext())}
+                        {{
+                          asc: ' 🔼',
+                          desc: ' 🔽',
+                        }[header.column.getIsSorted() ?? null]}
+                      </TableCell>
+                    ))}
+                  </TableRow>
+                ))}
+              </TableHead>
+              <TableBody>
+                {table.getRowModel().rows.map(row => (
+                  <TableRow
+                    key={row.id}
+                    sx={{
+                      cursor: 'pointer',
+                      '&:hover': {
+                        backgroundColor: 'rgba(0, 0, 0, 0.04)',
+                      }
+                    }}
+                    onClick={() => {
+                      setSelectedRecord(row.original);
+                      setIsDetailOpen(true);
+                    }}
+                  >
+                    {row.getVisibleCells().map(cell => (
+                      <TableCell
+                        key={cell.id}
+                        sx={{
+                          padding: '8px',
+                          whiteSpace: 'nowrap',
+                          overflow: 'hidden',
+                          textOverflow: 'ellipsis',
+                          maxWidth: cell.column.columnDef.size ? `${cell.column.columnDef.size}px` : 'auto'
+                        }}
+                      >
+                        {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                      </TableCell>
+                    ))}
+                  </TableRow>
+                ))}
+                {data.length === 0 && !isLoading && (
+                  <TableRow>
+                    <TableCell colSpan={columns.length} align="center" sx={{ py: 3 }}>
+                      <Typography variant="body1" color="text.secondary">
+                        {hasActiveFilters ? 'Nessun record corrisponde ai filtri applicati' : 'Nessun record disponibile'}
+                      </Typography>
+                    </TableCell>
+                  </TableRow>
+                )}
+              </TableBody>
+            </Table>
+          </TableContainer>
+        </Box>
+
+        {/* Paginazione */}
+        <Box sx={{ p: 2, display: 'flex', alignItems: 'center', borderTop: '1px solid #ddd', backgroundColor: 'background.paper', flexShrink: 0 }}>
+          <Box sx={{ mr: 2 }}>
+            Righe per pagina:
+            <select
+              value={pagination.pageSize}
+              onChange={e => {
+                setPagination(prev => ({
+                  ...prev,
+                  pageSize: Number(e.target.value),
+                  pageIndex: 0 // Reset alla prima pagina al cambiare il numero di righe per pagina
+                }));
+              }}
+              style={{ marginLeft: '8px', padding: '4px' }}
+            >
+              {[10, 25, 50, 100].map(pageSize => (
+                <option key={pageSize} value={pageSize}>
+                  {pageSize}
+                </option>
+              ))}
+            </select>
+          </Box>
+          <Box>
+            <IconButton onClick={() => setPagination(prev => ({ ...prev, pageIndex: 0 }))} disabled={pagination.pageIndex === 0}>
+              {"<<"}
+            </IconButton>
+            <IconButton onClick={() => setPagination(prev => ({ ...prev, pageIndex: Math.max(0, prev.pageIndex - 1) }))} disabled={pagination.pageIndex === 0}>
+              {"<"}
+            </IconButton>
+            <span style={{ margin: '0 8px' }}>
+              Pagina <strong>{pagination.pageIndex + 1} di {table.getPageCount() || 1}</strong>
+            </span>
+            <IconButton onClick={() => setPagination(prev => ({ ...prev, pageIndex: Math.min(table.getPageCount() - 1, prev.pageIndex + 1) }))} disabled={pagination.pageIndex >= table.getPageCount() - 1}>
+              {">"}
+            </IconButton>
+            <IconButton onClick={() => setPagination(prev => ({ ...prev, pageIndex: Math.max(0, table.getPageCount() - 1) }))} disabled={pagination.pageIndex >= table.getPageCount() - 1}>
+              {">>"}
+            </IconButton>
+          </Box>
+        </Box>
+      </Box>
+
+      {/* Dialog per filtri avanzati */}
+      <FilterDialog
+        open={isFilterDialogOpen}
+        onClose={() => setIsFilterDialogOpen(false)}
+        columns={columns.filter(col => col.id !== 'actions' && col.id !== 'selection')}
+        filters={columnFilters}
+        onFiltersChange={setColumnFilters}
+      />
+
+      {/* Dialog per la gestione della visibilità delle colonne */}
+      <ColumnVisibilityMenu
+        open={isColumnVisibilityDialogOpen}
+        onClose={() => setIsColumnVisibilityDialogOpen(false)}
+        table={table}
+      />
+
+      {/* Dialog per il dettaglio del record */}
+      {selectedRecord && (
+        <RecordDetail
+          open={isDetailOpen}
+          onClose={handleDetailClose}
+          record={selectedRecord}
+        />
+      )}
+    </Box>
+  );
+};
+
+export default DataTable;
+
+
+
+# ====== File: /var/www/html/insightg/wup/r_wup/src/components/modules/Anagrafica/MappingDialog.jsx ======
+// src/components/modules/Anagrafica/MappingDialog.jsx
+import React, { useState, useEffect } from 'react';
+import { 
+    Dialog,
+    DialogTitle,
+    DialogContent,
+    DialogActions,
+    Button,
+    Typography,
+    Box,
+    FormControl,
+    InputLabel,
+    Select,
+    MenuItem,
+    Table,
+    TableBody,
+    TableCell,
+    TableContainer,
+    TableHead,
+    TableRow,
+    Paper,
+    CircularProgress,
+    Alert,
+    TextField,
+    IconButton,
+    Tooltip,
+    Chip,
+    Divider
+} from '@mui/material';
+import {
+    Save as SaveIcon,
+    Delete as DeleteIcon,
+    Add as AddIcon,
+    AutoAwesome as AutoMappingIcon,
+    CheckCircle as MappedIcon,
+    Error as UnmappedIcon,
+    ImportExport as ImportIcon
+} from '@mui/icons-material';
+import useAnagraficaStore from '../../../stores/anagraficaStore';
+import anagraficaApi from '../../../api/anagraficaApi';
+
+// Database field definitions for tsis_anagrafica
+const DB_FIELDS = [
+    { field: 'id', label: 'ID', isKey: true },
+    { field: 'nome_account', label: 'Nome Account', required: true },
+    { field: 'sf_region', label: 'SF Region' },
+    { field: 'sf_district', label: 'SF District' },
+    { field: 'sf_territory', label: 'SF Territory' },
+    { field: 'tipo_di_record_account', label: 'Tipo di Record Account' },
+    { field: 'rrp_segment', label: 'RRP Segment' },
+    { field: 'trade', label: 'Trade' },
+    { field: 'cap_spedizioni', label: 'CAP Spedizioni' },
+    { field: 'statoprovincia_spedizioni', label: 'Stato/Provincia Spedizioni' },
+    { field: 'citt_spedizioni', label: 'Città Spedizioni' },
+    { field: 'indirizzo_spedizioni', label: 'Indirizzo Spedizioni' },
+    { field: 'telefono', label: 'Telefono' },
+    { field: 'mobile', label: 'Mobile' },
+    { field: 'email', label: 'Email' },
+    { field: 'field_rep', label: 'Field Rep' },
+    { field: 'numero_field_rep', label: 'Numero Field Rep' },
+    { field: 'supervisor', label: 'Supervisor' },
+    { field: 'numero_supervisor', label: 'Numero Supervisor' }
+];
+
+// Local storage key for saved mappings
+const STORAGE_KEY = 'anagrafica_header_mappings';
+
+const MappingDialog = ({ open, onClose, excelHeaders }) => {
+    const { headerMapping, setHeaderMapping } = useAnagraficaStore();
+    const [localMapping, setLocalMapping] = useState([]);
+    const [loading, setLoading] = useState(false);
+    const [error, setError] = useState(null);
+    const [savedMappings, setSavedMappings] = useState([]);
+    const [selectedMapping, setSelectedMapping] = useState('');
+    const [mappingName, setMappingName] = useState('');
+    const [showSaveDialog, setShowSaveDialog] = useState(false);
+    const [dbSchema, setDbSchema] = useState(null);
+
+    // Fetch database schema if needed
+    useEffect(() => {
+        if (open && !dbSchema) {
+            const fetchSchema = async () => {
+                try {
+                    setLoading(true);
+                    const response = await anagraficaApi.getDbSchema();
+                    if (response.data.success) {
+                        setDbSchema(response.data.schema);
+                    }
+                } catch (err) {
+                    console.error('Error fetching database schema:', err);
+                } finally {
+                    setLoading(false);
+                }
+            };
+            
+            fetchSchema();
+        }
+    }, [open, dbSchema]);
+
+    // Initialize mappings from localStorage and hook state
+    useEffect(() => {
+        if (open) {
+            loadSavedMappings();
+            
+            // Initialize local mapping
+            if (headerMapping.length === 0 && excelHeaders.length > 0) {
+                // Auto-mapping based on name similarity
+                const initialMapping = autoMapHeaders(excelHeaders);
+                setLocalMapping(initialMapping);
+            } else if (headerMapping.length > 0) {
+                setLocalMapping([...headerMapping]);
+            }
+        }
+    }, [open, excelHeaders, headerMapping]);
+
+    // Calculate mapping statistics
+    const getMappingStats = () => {
+        const mappedCount = localMapping.filter(m => m.excelHeader).length;
+        const unmappedCount = localMapping.filter(m => !m.excelHeader).length;
+        const requiredFieldsMapped = DB_FIELDS.filter(f => f.required).every(
+            requiredField => localMapping.some(
+                m => m.dbField === requiredField.field && m.excelHeader
+            )
+        );
+        
+        return { mappedCount, unmappedCount, requiredFieldsMapped };
+    };
+
+    // Load mappings from localStorage
+    const loadSavedMappings = () => {
+        try {
+            setLoading(true);
+            setError(null);
+            
+            const storedMappings = localStorage.getItem(STORAGE_KEY);
+            if (storedMappings) {
+                const mappings = JSON.parse(storedMappings);
+                setSavedMappings(mappings);
+            } else {
+                setSavedMappings([]);
+            }
+        } catch (err) {
+            console.error('Error loading saved mappings:', err);
+            setError('Impossibile recuperare le mappature salvate');
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    // Auto-mapping function based on name similarity
+    const autoMapHeaders = (headers) => {
+        return DB_FIELDS.map(dbField => {
+            // Convert to lowercase for better matching
+            const dbFieldNameLower = dbField.field.toLowerCase().replace(/_/g, '');
+            const dbFieldLabelLower = dbField.label.toLowerCase().replace(/ /g, '');
+            
+            // Try to find matching header
+            const matchingHeader = headers.find(header => {
+                if (!header) return false;
+                const headerLower = header.toLowerCase().replace(/[ _-]/g, '');
+                return headerLower === dbFieldNameLower || 
+                       headerLower === dbFieldLabelLower ||
+                       headerLower.includes(dbFieldNameLower) ||
+                       dbFieldNameLower.includes(headerLower);
+            });
+            
+            return {
+                dbField: dbField.field,
+                dbLabel: dbField.label,
+                required: dbField.required || false,
+                excelHeader: matchingHeader || ''
+            };
+        });
+    };
+
+    const handleMappingChange = (dbField, excelHeader) => {
+        setLocalMapping(prevMapping => {
+            return prevMapping.map(item => {
+                if (item.dbField === dbField) {
+                    return { ...item, excelHeader };
+                }
+                return item;
+            });
+        });
+    };
+
+    // Run auto-mapping
+    const handleAutoMapping = () => {
+        const newMapping = autoMapHeaders(excelHeaders);
+        setLocalMapping(newMapping);
+    };
+
+    // Save mapping to localStorage
+    const handleSaveMapping = () => {
+        if (!mappingName.trim()) {
+            alert('Per favore inserisci un nome per la mappatura');
+            return;
+        }
+        
+        try {
+            setLoading(true);
+            
+            // Create new mapping object
+            const newMapping = {
+                id: Date.now().toString(), // Use timestamp as ID
+                name: mappingName,
+                configuration: localMapping,
+                created_at: new Date().toISOString()
+            };
+            
+            // Add to saved mappings
+            const updatedMappings = [...savedMappings, newMapping];
+            localStorage.setItem(STORAGE_KEY, JSON.stringify(updatedMappings));
+            
+            // Update state
+            setSavedMappings(updatedMappings);
+            setSelectedMapping(newMapping.id);
+            setMappingName('');
+            setShowSaveDialog(false);
+        } catch (err) {
+            console.error('Error saving mapping:', err);
+            alert('Errore durante il salvataggio della mappatura');
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    // Delete a saved mapping
+    const handleDeleteMapping = (id) => {
+        if (!window.confirm('Sei sicuro di voler eliminare questa mappatura?')) {
+            return;
+        }
+        
+        try {
+            const updatedMappings = savedMappings.filter(mapping => mapping.id !== id);
+            localStorage.setItem(STORAGE_KEY, JSON.stringify(updatedMappings));
+            setSavedMappings(updatedMappings);
+            
+            if (selectedMapping === id) {
+                setSelectedMapping('');
+            }
+        } catch (err) {
+            console.error('Error deleting mapping:', err);
+            alert('Errore durante l\'eliminazione della mappatura');
+        }
+    };
+
+    // Load a saved mapping
+    const handleLoadMapping = (mappingId) => {
+        if (!mappingId) return;
+        
+        try {
+            setLoading(true);
+            
+            const mapping = savedMappings.find(m => m.id === mappingId);
+            
+            if (mapping && mapping.configuration) {
+                setLocalMapping(mapping.configuration);
+            } else {
+                throw new Error('Mapping configuration not found');
+            }
+        } catch (err) {
+            console.error('Error loading mapping:', err);
+            alert('Errore durante il caricamento della mappatura');
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    const handleConfirm = () => {
+        setHeaderMapping(localMapping);
+        onClose(true);
+    };
+
+    const handleSelectedMappingChange = (e) => {
+        setSelectedMapping(e.target.value);
+        if (e.target.value) {
+            handleLoadMapping(e.target.value);
+        }
+    };
+
+    // Calculate mapping statistics
+    const stats = getMappingStats();
+
+    return (
+        <Dialog 
+            open={open} 
+            onClose={() => onClose(false)} 
+            fullWidth 
+            maxWidth="md"
+            PaperProps={{
+                sx: { height: '80vh' }
+            }}
+        >
+            <DialogTitle sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <Box>
+                    Mappatura Campi Excel
+                    <Typography variant="caption" color="text.secondary" sx={{ display: 'block' }}>
+                        Associa le colonne del file Excel ai campi del database
+                    </Typography>
+                </Box>
+                <Box>
+                    <Chip 
+                        label={`${stats.mappedCount} campi mappati`}
+                        color={stats.mappedCount > 0 ? "success" : "default"}
+                        size="small"
+                        icon={<MappedIcon />}
+                        sx={{ mr: 1 }}
+                    />
+                    {!stats.requiredFieldsMapped && (
+                        <Chip 
+                            label="Campi obbligatori mancanti"
+                            color="error"
+                            size="small"
+                            icon={<UnmappedIcon />}
+                        />
+                    )}
+                </Box>
+            </DialogTitle>
+            
+            <DialogContent dividers>
+                {loading ? (
+                    <Box sx={{ display: 'flex', justifyContent: 'center', p: 3 }}>
+                        <CircularProgress />
+                    </Box>
+                ) : error ? (
+                    <Alert severity="error" sx={{ mb: 2 }}>
+                        {error}
+                    </Alert>
+                ) : (
+                    <>
+                        <Box sx={{ mb: 3 }}>
+                            <Typography variant="subtitle1" gutterBottom>
+                                Seleziona una mappatura salvata o crea una nuova mappatura
+                            </Typography>
+                            
+                            <Box sx={{ display: 'flex', gap: 2, alignItems: 'center' }}>
+                                <FormControl fullWidth>
+                                    <InputLabel>Mappature salvate</InputLabel>
+                                    <Select
+                                        value={selectedMapping}
+                                        onChange={handleSelectedMappingChange}
+                                        label="Mappature salvate"
+                                    >
+                                        <MenuItem value="">
+                                            <em>Nessuna mappatura</em>
+                                        </MenuItem>
+                                        {savedMappings.map(mapping => (
+                                            <MenuItem key={mapping.id} value={mapping.id}>
+                                                {mapping.name}
+                                            </MenuItem>
+                                        ))}
+                                    </Select>
+                                </FormControl>
+                                
+                                <Tooltip title="Salva nuova mappatura">
+                                    <IconButton 
+                                        color="primary" 
+                                        onClick={() => setShowSaveDialog(true)}
+                                    >
+                                        <AddIcon />
+                                    </IconButton>
+                                </Tooltip>
+                                
+                                {selectedMapping && (
+                                    <Tooltip title="Elimina mappatura">
+                                        <IconButton 
+                                            color="error" 
+                                            onClick={() => handleDeleteMapping(selectedMapping)}
+                                        >
+                                            <DeleteIcon />
+                                        </IconButton>
+                                    </Tooltip>
+                                )}
+                                
+                                <Tooltip title="Mappatura automatica">
+                                    <IconButton
+                                        color="primary"
+                                        onClick={handleAutoMapping}
+                                        size="small"
+                                    >
+                                        <AutoMappingIcon />
+                                    </IconButton>
+                                </Tooltip>
+                            </Box>
+                        </Box>
+                        
+                        {/* Dialog to save mapping */}
+                        {showSaveDialog && (
+                            <Box sx={{ 
+                                border: '1px solid #e0e0e0', 
+                                borderRadius: 1,
+                                p: 2,
+                                mb: 3,
+                                bgcolor: '#f5f5f5'
+                            }}>
+                                <Typography variant="subtitle2" gutterBottom>
+                                    Salva mappatura corrente
+                                </Typography>
+                                <Box sx={{ display: 'flex', gap: 2, alignItems: 'center' }}>
+                                    <TextField
+                                        label="Nome mappatura"
+                                        value={mappingName}
+                                        onChange={(e) => setMappingName(e.target.value)}
+                                        size="small"
+                                        fullWidth
+                                    />
+                                    <Button 
+                                        startIcon={<SaveIcon />}
+                                        variant="contained" 
+                                        onClick={handleSaveMapping}
+                                        disabled={!mappingName.trim()}
+                                    >
+                                        Salva
+                                    </Button>
+                                    <Button 
+                                        variant="outlined" 
+                                        onClick={() => setShowSaveDialog(false)}
+                                    >
+                                        Annulla
+                                    </Button>
+                                </Box>
+                            </Box>
+                        )}
+                        
+                        <TableContainer component={Paper} sx={{ mb: 2 }}>
+                            <Table stickyHeader>
+                                <TableHead>
+                                    <TableRow>
+                                        <TableCell width="40%">Campo Database</TableCell>
+                                        <TableCell width="60%">Intestazione Excel</TableCell>
+                                    </TableRow>
+                                </TableHead>
+                                <TableBody>
+                                    {localMapping.map((item) => (
+                                        <TableRow key={item.dbField}>
+                                            <TableCell>
+                                                <Box sx={{ display: 'flex', alignItems: 'center' }}>
+                                                    {item.dbLabel}
+                                                    {item.required && (
+                                                        <Chip 
+                                                            label="Richiesto" 
+                                                            size="small" 
+                                                            color="primary" 
+                                                            variant="outlined"
+                                                            sx={{ ml: 1 }}
+                                                        />
+                                                    )}
+                                                </Box>
+                                            </TableCell>
+                                            <TableCell>
+                                                <FormControl fullWidth size="small">
+                                                    <Select
+                                                        value={item.excelHeader || ''}
+                                                        onChange={(e) => handleMappingChange(item.dbField, e.target.value)}
+                                                        displayEmpty
+                                                        error={item.required && !item.excelHeader}
+                                                    >
+                                                        <MenuItem value="">
+                                                            <em>Non mappato</em>
+                                                        </MenuItem>
+                                                        {excelHeaders.map((header) => (
+                                                            <MenuItem key={header} value={header}>
+                                                                {header}
+                                                            </MenuItem>
+                                                        ))}
+                                                    </Select>
+                                                </FormControl>
+                                            </TableCell>
+                                        </TableRow>
+                                    ))}
+                                </TableBody>
+                            </Table>
+                        </TableContainer>
+                        
+                        <Alert severity="info">
+                            <Typography variant="body2">
+                                <strong>Nota:</strong> Assicurati di mappare i campi obbligatori. 
+                                I record senza i campi obbligatori verranno ignorati durante l'importazione.
+                            </Typography>
+                        </Alert>
+                    </>
+                )}
+            </DialogContent>
+            
+            <DialogActions>
+                <Button onClick={() => onClose(false)}>Annulla</Button>
+                <Button 
+                    onClick={() => setShowSaveDialog(true)}
+                    startIcon={<SaveIcon />}
+                    disabled={loading}
+                >
+                    Salva Mappatura
+                </Button>
+                <Button 
+                    onClick={handleConfirm} 
+                    variant="contained"
+                    startIcon={<ImportIcon />}
+                    disabled={loading || !stats.requiredFieldsMapped}
+                >
+                    Conferma e Procedi
+                </Button>
+            </DialogActions>
+        </Dialog>
+    );
+};
+
+export default MappingDialog;
+
+
+# ====== File: /var/www/html/insightg/wup/r_wup/src/components/modules/Anagrafica/ImportSection.jsx ======
+// src/components/modules/Anagrafica/ImportSection.jsx
+import React, { useState, useCallback, useRef } from 'react';
+import { 
+    Box, 
+    Paper, 
+    Typography, 
+    Button, 
+    FormControl, 
+    FormControlLabel, 
+    RadioGroup, 
+    Radio, 
+    Alert, 
+    LinearProgress,
+    CircularProgress,
+    Tooltip,
+    IconButton
+} from '@mui/material';
+import { 
+    CloudUpload as CloudUploadIcon,
+    Close as CloseIcon,
+    Info as InfoIcon
+} from '@mui/icons-material';
+import * as XLSX from 'xlsx';
+import { useDropzone } from 'react-dropzone';
+import useAnagraficaStore from '../../../stores/anagraficaStore';
+import MappingDialog from './MappingDialog';
+import anagraficaApi from '../../../api/anagraficaApi';
+import { chunk } from 'lodash';
+
+// Dimensione batch per l'elaborazione
+const BATCH_SIZE = 1000;
+
+const ImportSection = () => {
+    const { importMode, setImportMode, headerMapping, setHeaderMapping } = useAnagraficaStore();
+    const [file, setFile] = useState(null);
+    const [previewData, setPreviewData] = useState(null);
+    const [mappingOpen, setMappingOpen] = useState(false);
+    const [progress, setProgress] = useState(0);
+    const [importStatus, setImportStatus] = useState(null); // 'success', 'error', 'processing'
+    const [statusMessage, setStatusMessage] = useState('');
+    const [excelHeaders, setExcelHeaders] = useState([]);
+    const [isUploading, setIsUploading] = useState(false);
+    
+    const abortControllerRef = useRef(null);
+
+    // Gestione del file caricato con dropzone
+    const onDrop = useCallback(acceptedFiles => {
+        if (acceptedFiles.length === 0) return;
+        
+        const file = acceptedFiles[0];
+        setFile(file);
+        
+        // Reset any previous import status
+        setImportStatus(null);
+        setStatusMessage('');
+        
+        // Analisi del file Excel
+        const reader = new FileReader();
+        reader.onload = (e) => {
+            try {
+                const data = new Uint8Array(e.target.result);
+                const workbook = XLSX.read(data, { type: 'array' });
+                const firstSheetName = workbook.SheetNames[0];
+                const worksheet = workbook.Sheets[firstSheetName];
+                
+                // Conversione in JSON
+                const jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1 });
+                
+                // Estrazione intestazioni
+                const headers = jsonData[0];
+                setExcelHeaders(headers);
+                
+                // Anteprima dei dati (prime 5 righe)
+                const previewRows = jsonData.slice(1, 6);
+                setPreviewData(previewRows.map(row => {
+                    const rowData = {};
+                    headers.forEach((header, index) => {
+                        rowData[header] = row[index];
+                    });
+                    return rowData;
+                }));
+                
+                // Apertura dialog mappatura
+                setMappingOpen(true);
+            } catch (error) {
+                console.error('Errore analisi file Excel:', error);
+                setImportStatus('error');
+                setStatusMessage('Errore durante la lettura del file Excel. Verificare che il file sia nel formato corretto.');
+            }
+        };
+        reader.readAsArrayBuffer(file);
+    }, []);
+    
+    const { getRootProps, getInputProps, isDragActive, isDragReject } = useDropzone({ 
+        onDrop,
+        accept: {
+            'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': ['.xlsx'],
+            'application/vnd.ms-excel': ['.xls']
+        },
+        multiple: false
+    });
+    
+    const handleModeChange = (event) => {
+        setImportMode(event.target.value);
+    };
+    
+    const handleMappingClose = (confirmed) => {
+        setMappingOpen(false);
+        if (!confirmed) {
+            // Utente ha annullato la mappatura
+            setFile(null);
+            setPreviewData(null);
+            setExcelHeaders([]);
+        }
+    };
+    
+    const resetImport = () => {
+        setFile(null);
+        setPreviewData(null);
+        setExcelHeaders([]);
+        setImportStatus(null);
+        setStatusMessage('');
+        setProgress(0);
+    };
+    
+    const uploadData = async () => {
+        if (!file || !headerMapping.length) return;
+        
+        setImportStatus('processing');
+        setProgress(0);
+        setIsUploading(true);
+        setStatusMessage('Preparazione dati in corso...');
+        
+        try {
+            // Lettura del file completo
+            const reader = new FileReader();
+            reader.onload = async (e) => {
+                try {
+                    const data = new Uint8Array(e.target.result);
+                    const workbook = XLSX.read(data, { type: 'array' });
+                    const firstSheetName = workbook.SheetNames[0];
+                    const worksheet = workbook.Sheets[firstSheetName];
+                    
+                    // Conversione in JSON con intestazioni
+                    const jsonData = XLSX.utils.sheet_to_json(worksheet);
+                    setStatusMessage(`Elaborazione di ${jsonData.length} record...`);
+                    
+                    // Elaborazione dati in batch per evitare sovraccarichi del server
+                    const batches = chunk(jsonData, BATCH_SIZE);
+                    
+                    // Controller per l'annullamento
+                    abortControllerRef.current = new AbortController();
+                    
+                    let processedRows = 0;
+                    let failedRows = 0;
+                    
+                    for (let i = 0; i < batches.length; i++) {
+                        if (abortControllerRef.current.signal.aborted) {
+                            setImportStatus('cancelled');
+                            setStatusMessage(`Import annullato. ${processedRows} record elaborati, ${failedRows} falliti.`);
+                            break;
+                        }
+                        
+                        const batch = batches[i];
+                        const mappedBatch = batch.map(row => {
+                            const mappedRow = {};
+                            headerMapping.forEach(mapping => {
+                                if (mapping.excelHeader && mapping.dbField) {
+                                    mappedRow[mapping.dbField] = row[mapping.excelHeader];
+                                }
+                            });
+                            return mappedRow;
+                        });
+                        
+                        const formData = new FormData();
+                        formData.append('data', JSON.stringify(mappedBatch));
+                        formData.append('mode', importMode);
+                        
+                        try {
+                            setStatusMessage(`Importazione batch ${i+1}/${batches.length}...`);
+                            const response = await anagraficaApi.importData(formData);
+                            processedRows += response.data.processedCount || 0;
+                            failedRows += response.data.failedCount || 0;
+                        } catch (error) {
+                            console.error('Errore batch import:', error);
+                            failedRows += batch.length;
+                        }
+                        
+                        // Aggiornamento progresso
+                        const newProgress = Math.round(((i + 1) / batches.length) * 100);
+                        setProgress(newProgress);
+                    }
+                    
+                    if (!abortControllerRef.current.signal.aborted) {
+                        setImportStatus('success');
+                        setStatusMessage(`Import completato con successo. ${processedRows} record elaborati, ${failedRows} falliti.`);
+                    }
+                } catch (error) {
+                    console.error('Errore elaborazione dati Excel:', error);
+                    setImportStatus('error');
+                    setStatusMessage('Errore durante l\'elaborazione dei dati Excel: ' + error.message);
+                } finally {
+                    setIsUploading(false);
+                    abortControllerRef.current = null;
+                }
+            };
+            
+            reader.readAsArrayBuffer(file);
+        } catch (error) {
+            console.error('Errore durante import:', error);
+            setImportStatus('error');
+            setStatusMessage('Errore durante l\'importazione: ' + error.message);
+            setIsUploading(false);
+        }
+    };
+    
+    const cancelImport = () => {
+        if (abortControllerRef.current) {
+            abortControllerRef.current.abort();
+        }
+    };
+    
+    return (
+        <Box sx={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'auto', p: 2 }}>
+            <Paper sx={{ p: 3, mb: 3 }}>
+                <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
+                    <Typography variant="h6">
+                        Importazione Anagrafica
+                    </Typography>
+                    
+                    <Tooltip title="Come funziona l'importazione">
+                        <IconButton>
+                            <InfoIcon />
+                        </IconButton>
+                    </Tooltip>
+                </Box>
+                
+                <Box sx={{ mb: 3 }}>
+                    <Typography variant="subtitle2" gutterBottom>
+                        Modalità di importazione:
+                    </Typography>
+                    <RadioGroup 
+                        row 
+                        name="importMode" 
+                        value={importMode}
+                        onChange={handleModeChange}
+                    >
+                        <Tooltip title="Inserisce solo nuovi record. Ignora record esistenti con lo stesso nome account.">
+                            <FormControlLabel 
+                                value="insert" 
+                                control={<Radio />} 
+                                label="Inserisci nuovi record" 
+                            />
+                        </Tooltip>
+                        <Tooltip title="Aggiorna solo record esistenti. Ignora record non presenti nel database.">
+                            <FormControlLabel 
+                                value="update" 
+                                control={<Radio />} 
+                                label="Aggiorna record esistenti" 
+                            />
+                        </Tooltip>
+                        <Tooltip title="Inserisce nuovi record e aggiorna quelli esistenti.">
+                            <FormControlLabel 
+                                value="both" 
+                                control={<Radio />} 
+                                label="Inserisci e aggiorna" 
+                            />
+                        </Tooltip>
+                    </RadioGroup>
+                </Box>
+                
+                <Box {...getRootProps()} 
+                    sx={{
+                        border: '2px dashed',
+                        borderColor: isDragReject ? 'error.main' : isDragActive ? 'primary.main' : 'grey.400',
+                        borderRadius: 2,
+                        p: 3,
+                        mb: 3,
+                        textAlign: 'center',
+                        backgroundColor: isDragActive ? 'rgba(25, 118, 210, 0.04)' : 'transparent',
+                        cursor: isUploading ? 'not-allowed' : 'pointer',
+                        opacity: isUploading ? 0.6 : 1,
+                        transition: 'all 0.2s ease'
+                    }}
+                >
+                    <input {...getInputProps()} disabled={isUploading} />
+                    <CloudUploadIcon sx={{ fontSize: 48, color: 'primary.main', mb: 2 }} />
+                    
+                    {file ? (
+                        <Box>
+                            <Typography variant="subtitle1" gutterBottom>
+                                File selezionato:
+                            </Typography>
+                            <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 1 }}>
+                                <Typography>
+                                    <strong>{file.name}</strong> ({(file.size / 1024 / 1024).toFixed(2)} MB)
+                                </Typography>
+                                {!isUploading && (
+                                    <IconButton size="small" onClick={(e) => {
+                                        e.stopPropagation();
+                                        resetImport();
+                                    }}>
+                                        <CloseIcon />
+                                    </IconButton>
+                                )}
+                            </Box>
+                        </Box>
+                    ) : (
+                        <Typography>
+                            {isDragActive ? 
+                                isDragReject ? "File non supportato" : "Rilascia il file Excel qui..." : 
+                                "Trascina qui il file Excel oppure clicca per selezionarlo"}
+                        </Typography>
+                    )}
+                    
+                    <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 1 }}>
+                        Accetta file .xlsx e .xls
+                    </Typography>
+                </Box>
+                
+                {previewData && (
+                    <Box sx={{ mb: 3 }}>
+                        <Typography variant="subtitle2" gutterBottom>
+                            Anteprima dati:
+                        </Typography>
+                        <Box sx={{ maxHeight: 200, overflow: 'auto', border: '1px solid', borderColor: 'grey.300', borderRadius: 1 }}>
+                            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                                <thead>
+                                    <tr>
+                                        {excelHeaders.map((header, index) => (
+                                            <th key={index} style={{ 
+                                                border: '1px solid #ddd', 
+                                                padding: 8, 
+                                                backgroundColor: '#f5f5f5',
+                                                position: 'sticky',
+                                                top: 0,
+                                                zIndex: 2
+                                            }}>
+                                                {header}
+                                            </th>
+                                        ))}
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {previewData.map((row, rowIndex) => (
+                                        <tr key={rowIndex}>
+                                            {excelHeaders.map((header, colIndex) => (
+                                                <td key={colIndex} style={{ 
+                                                    border: '1px solid #ddd', 
+                                                    padding: 8 
+                                                }}>
+                                                    {row[header]}
+                                                </td>
+                                            ))}
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
+                        </Box>
+                    </Box>
+                )}
+                
+                {importStatus === 'processing' && (
+                    <Box sx={{ mb: 3 }}>
+                        <Typography variant="subtitle2" gutterBottom>
+                            {statusMessage || 'Importazione in corso...'}
+                        </Typography>
+                        <Box sx={{ display: 'flex', alignItems: 'center', mb: 1 }}>
+                            <Box sx={{ width: '100%', mr: 1 }}>
+                                <LinearProgress variant="determinate" value={progress} sx={{ height: 10, borderRadius: 5 }} />
+                            </Box>
+                            <Box sx={{ minWidth: 35 }}>
+                                <Typography variant="body2" color="text.secondary">
+                                    {progress}%
+                                </Typography>
+                            </Box>
+                        </Box>
+                        <Button 
+                            variant="outlined" 
+                            color="error" 
+                            sx={{ mt: 1 }}
+                            onClick={cancelImport}
+                            startIcon={<CloseIcon />}
+                        >
+                            Annulla importazione
+                        </Button>
+                    </Box>
+                )}
+                
+                {importStatus && importStatus !== 'processing' && (
+                    <Alert 
+                        severity={importStatus === 'success' ? 'success' : 'error'} 
+                        sx={{ mb: 3 }}
+                        action={
+                            <Button color="inherit" size="small" onClick={resetImport}>
+                                Nuova importazione
+                            </Button>
+                        }
+                    >
+                        {statusMessage}
+                    </Alert>
+                )}
+                
+                <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
+                    <Button 
+                        variant="outlined" 
+                        onClick={() => setMappingOpen(true)}
+                        disabled={!file || isUploading}
+                    >
+                        {headerMapping.length > 0 ? 'Modifica mappatura campi' : 'Configura mappatura campi'}
+                    </Button>
+                    
+                    <Button 
+                        variant="contained" 
+                        onClick={uploadData}
+                        disabled={!file || !headerMapping.length || isUploading || importStatus === 'success'}
+                        startIcon={isUploading ? <CircularProgress size={20} color="inherit" /> : null}
+                    >
+                        {isUploading ? 'Importazione in corso...' : 'Avvia importazione'}
+                    </Button>
+                </Box>
+            </Paper>
+            
+            {/* Informazioni sul processo di importazione */}
+            <Paper sx={{ p: 3, mb: 3 }}>
+                <Typography variant="h6" gutterBottom>
+                    Informazioni sull'importazione
+                </Typography>
+                <Typography variant="body2" paragraph>
+                    Il processo di importazione permette di caricare dati da un file Excel nella tabella dell'anagrafica.
+                </Typography>
+                
+                <Typography variant="subtitle2" gutterBottom>
+                    Modalità di importazione:
+                </Typography>
+                <ul>
+                    <li>
+                        <Typography variant="body2">
+                            <strong>Inserisci nuovi record</strong>: Aggiungerà solo nuovi clienti, ignorando quelli esistenti.
+                        </Typography>
+                    </li>
+                    <li>
+                        <Typography variant="body2">
+                            <strong>Aggiorna record esistenti</strong>: Aggiornerà solo i clienti già presenti nel database.
+                        </Typography>
+                    </li>
+                    <li>
+                        <Typography variant="body2">
+                            <strong>Inserisci e aggiorna</strong>: Aggiungerà nuovi clienti e aggiornerà quelli esistenti.
+                        </Typography>
+                    </li>
+                </ul>
+                
+                <Typography variant="subtitle2" gutterBottom sx={{ mt: 2 }}>
+                    Formato del file:
+                </Typography>
+                <Typography variant="body2">
+                    Il file Excel deve avere una riga di intestazione con i nomi delle colonne. 
+                    Attraverso la mappatura potrai associare queste colonne ai campi del database.
+                </Typography>
+                
+                <Typography variant="subtitle2" gutterBottom sx={{ mt: 2 }}>
+                    Identificazione dei record:
+                </Typography>
+                <Typography variant="body2">
+                    I record vengono identificati in base al campo "Nome Account". 
+                    Questo campo è obbligatorio per l'importazione.
+                </Typography>
+            </Paper>
+            
+            {/* Dialog Mappatura */}
+            <MappingDialog 
+                open={mappingOpen}
+                onClose={handleMappingClose}
+                excelHeaders={excelHeaders}
+            />
+        </Box>
+    );
+};
+
+export default ImportSection;
+
+
+# ====== File: /var/www/html/insightg/wup/r_wup/src/components/modules/Anagrafica/wup.code-workspace ======
+{
+	"folders": [
+		{
+			"path": "../../../../.."
+		}
+	]
+}
+
+
+# ====== File: /var/www/html/insightg/wup/r_wup/src/components/modules/Anagrafica/FilterDialog.jsx ======
+import React, { useState, useEffect } from 'react';
+import {
+    Dialog,
+    DialogTitle,
+    DialogContent,
+    DialogActions,
+    Button,
+    Box,
+    FormControl,
+    InputLabel,
+    Select,
+    MenuItem,
+    TextField,
+    IconButton,
+    Chip,
+    Typography,
+    Grid,
+    Paper,
+    Divider,
+    Stack,
+    Alert
+} from '@mui/material';
+import {
+    Add as AddIcon,
+    Close as CloseIcon,
+    FilterList as FilterIcon,
+    Delete as DeleteIcon
+} from '@mui/icons-material';
+
+// Operatori di filtro disponibili con descrizioni
+const filterOperators = [
+    { value: 'contains', label: 'Contiene', description: 'Cerca valori che contengono il testo specificato' },
+    { value: 'equals', label: 'Uguale a', description: 'Cerca valori esattamente uguali al testo specificato' },
+    { value: 'startsWith', label: 'Inizia con', description: 'Cerca valori che iniziano con il testo specificato' },
+    { value: 'endsWith', label: 'Finisce con', description: 'Cerca valori che finiscono con il testo specificato' },
+    { value: 'isEmpty', label: 'È vuoto', description: 'Cerca valori vuoti o nulli' },
+    { value: 'isNotEmpty', label: 'Non è vuoto', description: 'Cerca valori non vuoti e non nulli' },
+    { value: 'gt', label: 'Maggiore di', description: 'Cerca valori maggiori di quello specificato' },
+    { value: 'gte', label: 'Maggiore o uguale a', description: 'Cerca valori maggiori o uguali a quello specificato' },
+    { value: 'lt', label: 'Minore di', description: 'Cerca valori minori di quello specificato' },
+    { value: 'lte', label: 'Minore o uguale a', description: 'Cerca valori minori o uguali a quello specificato' }
+];
+
+const FilterDialog = ({ open, onClose, columns, filters, onFiltersChange }) => {
+    const [activeFilters, setActiveFilters] = useState([]);
+    const [newFilter, setNewFilter] = useState({
+        id: '',
+        operator: 'contains',
+        value: ''
+    });
+    const [operatorDescription, setOperatorDescription] = useState('');
+
+    // Inizializza i filtri attivi all'apertura del dialog
+    useEffect(() => {
+        if (open) {
+            setActiveFilters([...filters]);
+        }
+    }, [open, filters]);
+
+    // Aggiorna la descrizione dell'operatore quando cambia
+    useEffect(() => {
+        const operator = filterOperators.find(op => op.value === newFilter.operator);
+        setOperatorDescription(operator ? operator.description : '');
+    }, [newFilter.operator]);
+
+    // Gestione nuovo filtro
+    const handleAddFilter = () => {
+        if (!newFilter.id) return;
+        
+        // Per operatori che non richiedono un valore (isEmpty, isNotEmpty)
+        if (['isEmpty', 'isNotEmpty'].includes(newFilter.operator)) {
+            setActiveFilters([
+                ...activeFilters,
+                { ...newFilter, value: '' }
+            ]);
+        } else if (newFilter.value || newFilter.value === 0) {
+            // Per operatori che richiedono un valore
+            setActiveFilters([
+                ...activeFilters,
+                { ...newFilter }
+            ]);
+        }
+        
+        // Reset nuovo filtro
+        setNewFilter({
+            id: '',
+            operator: 'contains',
+            value: ''
+        });
+    };
+
+    // Gestione rimozione filtro
+    const handleRemoveFilter = (index) => {
+        const updatedFilters = [...activeFilters];
+        updatedFilters.splice(index, 1);
+        setActiveFilters(updatedFilters);
+    };
+
+    // Gestione cambio colonna
+    const handleColumnChange = (e) => {
+        setNewFilter({
+            ...newFilter,
+            id: e.target.value
+        });
+    };
+
+    // Gestione cambio operatore
+    const handleOperatorChange = (e) => {
+        setNewFilter({
+            ...newFilter,
+            operator: e.target.value
+        });
+    };
+
+    // Gestione cambio valore
+    const handleValueChange = (e) => {
+        setNewFilter({
+            ...newFilter,
+            value: e.target.value
+        });
+    };
+
+    // Gestione conferma filtri
+    const handleConfirm = () => {
+        onFiltersChange(activeFilters);
+        onClose();
+    };
+
+    // Ottieni il nome visualizzato della colonna dal suo ID
+    const getColumnLabel = (columnId) => {
+        const column = columns.find(col => col.accessorKey === columnId);
+        return column ? column.header : columnId;
+    };
+
+    // Ottieni l'etichetta dell'operatore dal suo valore
+    const getOperatorLabel = (operatorValue) => {
+        const operator = filterOperators.find(op => op.value === operatorValue);
+        return operator ? operator.label : operatorValue;
+    };
+
+    // Verifica se il campo di valore è disabilitato per l'operatore attuale
+    const isValueDisabled = ['isEmpty', 'isNotEmpty'].includes(newFilter.operator);
+
+    return (
+        <Dialog
+            open={open}
+            onClose={() => onClose()}
+            fullWidth
+            maxWidth="md"
+            PaperProps={{
+                sx: { maxHeight: '80vh' }
+            }}
+        >
+            <DialogTitle sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                <FilterIcon />
+                <Typography variant="h6">Filtri Avanzati</Typography>
+            </DialogTitle>
+            
+            <Divider />
+            
+            <DialogContent>
+                <Box sx={{ mb: 3 }}>
+                    <Typography variant="subtitle1" gutterBottom>
+                        Aggiungi un nuovo filtro
+                    </Typography>
+                    
+                    <Paper variant="outlined" sx={{ p: 2 }}>
+                        <Grid container spacing={2} alignItems="center">
+                            <Grid item xs={12} md={4}>
+                                <FormControl fullWidth size="small">
+                                    <InputLabel>Colonna</InputLabel>
+                                    <Select
+                                        value={newFilter.id}
+                                        onChange={handleColumnChange}
+                                        label="Colonna"
+                                    >
+                                        <MenuItem value="">
+                                            <em>Seleziona colonna</em>
+                                        </MenuItem>
+                                        {columns.map(column => (
+                                            <MenuItem 
+                                                key={column.accessorKey} 
+                                                value={column.accessorKey}
+                                            >
+                                                {column.header}
+                                            </MenuItem>
+                                        ))}
+                                    </Select>
+                                </FormControl>
+                            </Grid>
+                            
+                            <Grid item xs={12} md={3}>
+                                <FormControl fullWidth size="small">
+                                    <InputLabel>Operatore</InputLabel>
+                                    <Select
+                                        value={newFilter.operator}
+                                        onChange={handleOperatorChange}
+                                        label="Operatore"
+                                    >
+                                        {filterOperators.map(operator => (
+                                            <MenuItem 
+                                                key={operator.value} 
+                                                value={operator.value}
+                                            >
+                                                {operator.label}
+                                            </MenuItem>
+                                        ))}
+                                    </Select>
+                                </FormControl>
+                                <Typography variant="caption" color="text.secondary">
+                                    {operatorDescription}
+                                </Typography>
+                            </Grid>
+                            
+                            <Grid item xs={12} md={4}>
+                                <TextField
+                                    fullWidth
+                                    size="small"
+                                    value={newFilter.value}
+                                    onChange={handleValueChange}
+                                    label="Valore"
+                                    disabled={isValueDisabled}
+                                    variant="outlined"
+                                    placeholder={isValueDisabled ? "Non richiesto" : "Inserisci valore"}
+                                />
+                            </Grid>
+                            
+                            <Grid item xs={12} md={1} sx={{ display: 'flex', justifyContent: 'center' }}>
+                                <IconButton 
+                                    color="primary" 
+                                    onClick={handleAddFilter}
+                                    disabled={!newFilter.id || (!newFilter.value && !isValueDisabled)}
+                                >
+                                    <AddIcon />
+                                </IconButton>
+                            </Grid>
+                        </Grid>
+                    </Paper>
+                </Box>
+                
+                <Divider sx={{ my: 2 }} />
+                
+                <Typography variant="subtitle1" gutterBottom>
+                    Filtri attivi
+                </Typography>
+                
+                {activeFilters.length === 0 ? (
+                    <Alert severity="info" sx={{ mb: 2 }}>
+                        Nessun filtro attivo. Aggiungi un filtro utilizzando il modulo sopra.
+                    </Alert>
+                ) : (
+                    <Paper variant="outlined" sx={{ p: 2 }}>
+                        <Stack spacing={1}>
+                            {activeFilters.map((filter, index) => (
+                                <Box 
+                                    key={index} 
+                                    sx={{ 
+                                        display: 'flex', 
+                                        alignItems: 'center', 
+                                        justifyContent: 'space-between',
+                                        p: 1,
+                                        bgcolor: 'background.default',
+                                        borderRadius: 1
+                                    }}
+                                >
+                                    <Typography>
+                                        <strong>{getColumnLabel(filter.id)}</strong>
+                                        {' '}
+                                        <span style={{ color: '#666' }}>{getOperatorLabel(filter.operator)}</span>
+                                        {filter.value && ` "${filter.value}"`}
+                                    </Typography>
+                                    <IconButton 
+                                        size="small" 
+                                        color="error" 
+                                        onClick={() => handleRemoveFilter(index)}
+                                    >
+                                        <CloseIcon fontSize="small" />
+                                    </IconButton>
+                                </Box>
+                            ))}
+                        </Stack>
+                    </Paper>
+                )}
+                
+                {activeFilters.length > 0 && (
+                    <Box sx={{ mt: 2, textAlign: 'right' }}>
+                        <Button 
+                            variant="outlined" 
+                            color="error" 
+                            startIcon={<DeleteIcon />}
+                            onClick={() => setActiveFilters([])}
+                            size="small"
+                        >
+                            Rimuovi tutti i filtri
+                        </Button>
+                    </Box>
+                )}
+            </DialogContent>
+            
+            <Divider />
+            
+            <DialogActions sx={{ p: 2 }}>
+                <Button onClick={() => onClose()}>Annulla</Button>
+                <Button 
+                    onClick={handleConfirm} 
+                    variant="contained" 
+                    startIcon={<FilterIcon />}
+                >
+                    Applica Filtri
+                </Button>
+            </DialogActions>
+        </Dialog>
+    );
+};
+
+export default FilterDialog;
+

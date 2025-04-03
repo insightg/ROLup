@@ -1,0 +1,4997 @@
+
+# ====== File: /var/www/html/insightg/wup/r_wup/src/components/modules/RouteOptimizer/stores/routeOptimizerStore.jsx ======
+import { create } from 'zustand';
+import { 
+  fetchPOSLocations, 
+  optimizeRoute, 
+  savePlan, 
+  loadPlans, 
+  loadPlan, 
+  geocodeAddress,
+  fetchGoogleMapsApiKey,
+  deletePlan
+} from '../api/routeOptimizerApi';
+
+export const useRouteOptimizerStore = create((set, get) => ({
+  // Stato
+  locations: [], // Elenco di POS da visitare
+  availablePOS: [], // POS disponibili per autosuggest
+  optimizedRoute: null, // Risultati dell'ottimizzazione
+  isOptimizing: false, // Flag operazione in corso
+  isLoading: false, // Flag caricamento dati
+  optimizationStats: null, // Statistiche sull'ottimizzazione
+  error: null, // Eventuali errori
+  savedPlans: [], // Piani salvati
+  selectedPlan: null, // Piano selezionato
+  
+  // Impostazioni di pianificazione
+  scheduleSettings: {
+    startLocationType: 'firstLocation', // 'firstLocation' o 'custom'
+    startLocation: null, // { address, lat, lng } per indirizzo personalizzato
+    returnToStart: false, // se tornare al punto di partenza
+    workStartTime: '08:00', // Orario inizio giornata
+    workEndTime: '18:00', // Orario fine giornata
+    lunchBreakStart: '13:00', // Inizio pausa pranzo
+    lunchBreakDuration: 60, // Durata pausa pranzo in minuti
+    maxDays: 7, // Massimi giorni pianificabili
+    travelMode: 'driving', // Modalità di viaggio
+    considerTraffic: true, // Considera il traffico
+    avoidTolls: false, // Evita pedaggi
+    avoidHighways: false, // Evita autostrade
+    useHubForDailyStart: false, // Nuova opzione: usa il punto hub per iniziare ogni giorno
+    optimizationMethod: 'global', // 'global' (ottimizzazione globale) o 'daily' (ottimizzazione giornaliera)
+  },
+  
+  // Azioni
+  addLocation: (location) => {
+    set((state) => ({
+      locations: [...state.locations, {
+        ...location,
+        id: Date.now().toString(), // Genera un ID univoco
+        duration: location.duration || 30, // Durata in minuti, default 30
+        priority: location.priority || 'normal', // Priorità, default normal
+        notes: location.notes || ''
+      }]
+    }));
+  },
+  setAvailablePOS: (pos) => {
+    set({ availablePOS: pos });
+  },
+  removeLocation: (locationId) => {
+    set((state) => ({
+      locations: state.locations.filter(loc => loc.id !== locationId)
+    }));
+  },
+  
+  updateLocation: (locationId, updates) => {
+    set((state) => ({
+      locations: state.locations.map(loc => 
+        loc.id === locationId ? { ...loc, ...updates } : loc
+      )
+    }));
+  },
+  
+  updateScheduleSettings: (settings) => {
+    set((state) => ({
+      scheduleSettings: { ...state.scheduleSettings, ...settings }
+    }));
+  },
+  
+  fetchPOS: async () => {
+    try {
+      console.log('Starting fetchPOS in store');
+      set({ isLoading: true, error: null });
+      
+      const response = await fetchPOSLocations();
+      console.log('Received POS data:', response);
+      
+      if (!response || !response.success) {
+        throw new Error(response?.error || 'Errore nel caricamento dei POS');
+      }
+      
+      const pos = response.data || [];
+      
+      if (pos.length === 0) {
+        console.warn('No POS data received or empty array');
+        set({ availablePOS: [], isLoading: false });
+        return;
+      }
+      
+      // Verifica che i dati siano nel formato corretto e contengano i campi necessari
+      const validPos = pos.filter(item => 
+        item && 
+        typeof item === 'object' && 
+        item.nome_account && 
+        item.id
+      );
+      
+      console.log(`Filtered ${validPos.length} valid POS records out of ${pos.length}`);
+      
+      set({ availablePOS: validPos, isLoading: false });
+    } catch (error) {
+      console.error('Error in fetchPOS:', error);
+      set({ 
+        error: error.message || 'Errore nel caricamento dei POS', 
+        isLoading: false,
+        availablePOS: [] 
+      });
+    }
+  },
+  
+  optimizeRoute: async () => {
+    const { locations, scheduleSettings } = get();
+    
+    if (locations.length < 2) {
+      set({ error: 'Servono almeno due posizioni per ottimizzare un percorso' });
+      return;
+    }
+    
+    set({ isOptimizing: true, error: null });
+    
+    try {
+      const result = await optimizeRoute(locations, scheduleSettings);
+      
+      set({ 
+        optimizedRoute: result.route, 
+        optimizationStats: result.stats,
+        isOptimizing: false 
+      });
+      
+      return result;
+    } catch (error) {
+      set({ 
+        error: error.message || 'Errore nell\'ottimizzazione del percorso', 
+        isOptimizing: false 
+      });
+      throw error;
+    }
+  },
+  
+  savePlanToServer: async (name, description) => {
+    try {
+      const { optimizedRoute, locations, scheduleSettings } = get();
+      
+      if (!optimizedRoute) {
+        throw new Error('Nessun percorso da salvare');
+      }
+      
+      const planData = {
+        name,
+        description,
+        originalLocations: locations,
+        optimizedRoute,
+        scheduleSettings
+      };
+      
+      await savePlan(planData);
+      await get().fetchSavedPlans(); // Ricarica i piani salvati
+      
+      return true;
+    } catch (error) {
+      set({ error: error.message || 'Errore nel salvataggio del piano' });
+      return false;
+    }
+  },
+  
+  fetchSavedPlans: async () => {
+    try {
+      const response = await loadPlans();
+      
+      if (!response || !response.success) {
+        throw new Error(response?.error || 'Errore nel caricamento dei piani');
+      }
+      
+      set({ savedPlans: response.data || [] });
+    } catch (error) {
+      set({ error: error.message || 'Errore nel caricamento dei piani salvati' });
+    }
+  },
+  
+  loadPlanFromServer: async (planId) => {
+    try {
+      const response = await loadPlan(planId);
+      
+      if (!response || !response.success) {
+        throw new Error(response?.error || 'Errore nel caricamento del piano');
+      }
+      
+      const plan = response.data;
+      
+      set({ 
+        selectedPlan: plan,
+        locations: plan.originalLocations,
+        optimizedRoute: plan.optimizedRoute,
+        scheduleSettings: plan.scheduleSettings,
+        optimizationStats: plan.optimizedRoute.stats
+      });
+      
+      return plan;
+    } catch (error) {
+      set({ error: error.message || 'Errore nel caricamento del piano' });
+      throw error;
+    }
+  },
+  
+  clearLocations: () => {
+    set({ locations: [] });
+  },
+  
+  setError: (error) => {
+    set({ error });
+  },
+  
+  clearError: () => {
+    set({ error: null });
+  }
+}));
+
+
+# ====== File: /var/www/html/insightg/wup/r_wup/src/components/modules/RouteOptimizer/RouteOptimizerContainer.jsx ======
+import React, { useState, useEffect } from 'react';
+import { 
+  Box, 
+  Typography, 
+  CircularProgress, 
+  Button, 
+  Paper,
+  Tabs,
+  Tab,
+  Snackbar,
+  Alert,
+  Divider,
+  Grid
+} from '@mui/material';
+import {
+  Save as SaveIcon,
+  Folder as LoadIcon,
+  Navigation as NavigationIcon,
+  CalendarToday as CalendarIcon,
+  ViewDay as DayIcon
+} from '@mui/icons-material';
+
+import POSTableWithSelection from './components/POSTableWithSelection';
+import RouteMap from './components/RouteMap';
+import ScheduleSettings from './components/ScheduleSettings';
+import OptimizationResults from './components/OptimizationResults';
+import SavePlanDialog from './components/SavePlanDialog';
+import LoadPlanDialog from './components/LoadPlanDialog';
+import TimelineView from './components/TimelineView';
+
+import { useRouteOptimizerStore } from './stores/routeOptimizerStore';
+
+const RouteOptimizerContainer = () => {
+  const [activeMainTab, setActiveMainTab] = useState(0);
+  const [saveDialogOpen, setSaveDialogOpen] = useState(false);
+  const [loadDialogOpen, setLoadDialogOpen] = useState(false);
+  const [notification, setNotification] = useState({ open: false, message: '', severity: 'info' });
+  const [selectedDay, setSelectedDay] = useState(0); // 0 = visione completa, 1+ = giorni specifici
+
+  const { 
+    locations, 
+    optimizedRoute,
+    isOptimizing,
+    optimizationStats,
+    error,
+    fetchPOS,
+    optimizeRoute,
+    clearError,
+    savedPlans,
+    fetchSavedPlans
+  } = useRouteOptimizerStore();
+
+  // Reimposta il giorno selezionato quando cambia il piano
+  useEffect(() => {
+    if (optimizedRoute && optimizedRoute.days && optimizedRoute.days.length > 0) {
+      setSelectedDay(0); // Seleziona la vista completa quando cambia il piano
+    }
+  }, [optimizedRoute?.days]);
+
+  useEffect(() => {
+    // Carica i POS per autosuggest
+    fetchPOS();
+    // Carica piani salvati
+    fetchSavedPlans();
+  }, []);
+
+  const handleSave = () => {
+    setSaveDialogOpen(true);
+  };
+
+  const handleLoad = () => {
+    setLoadDialogOpen(true);
+  };
+
+  const showNotification = (message, severity = 'success') => {
+    setNotification({
+      open: true,
+      message,
+      severity
+    });
+  };
+
+  const handleCloseNotification = () => {
+    setNotification({...notification, open: false});
+  };
+
+  const handleOptimize = () => {
+    optimizeRoute()
+      .then(() => {
+        showNotification('Percorso ottimizzato con successo!');
+        setActiveMainTab(1); // Passa alla tab dei risultati
+        setSelectedDay(0); // Seleziona la vista completa per default
+      })
+      .catch((err) => {
+        showNotification(err.message || 'Errore nell\'ottimizzazione del percorso', 'error');
+      });
+  };
+
+  // Gestisce il cambio di giorno selezionato
+  const handleDayChange = (event, newValue) => {
+    console.log("Changing selected day to:", newValue);
+    setSelectedDay(newValue);
+  };
+
+  return (
+    <Box sx={{ p: 2, height: '100%', display: 'flex', flexDirection: 'column' }}>
+      {/* Header con titolo e azioni */}
+      <Box sx={{ 
+        display: 'flex', 
+        justifyContent: 'space-between', 
+        alignItems: 'center', 
+        mb: 2
+      }}>
+        <Typography variant="h5">Ottimizzatore Percorsi Visite POS</Typography>
+        
+        <Box sx={{ display: 'flex', gap: 1 }}>
+          <Button 
+            variant="outlined"
+            startIcon={<LoadIcon />}
+            onClick={handleLoad}
+          >
+            Carica Piano
+          </Button>
+          
+          <Button 
+            variant="outlined"
+            startIcon={<SaveIcon />}
+            onClick={handleSave}
+            disabled={!optimizedRoute?.days?.length}
+          >
+            Salva Piano
+          </Button>
+          
+          {optimizedRoute?.days?.length && (
+            <Button
+              variant="contained"
+              onClick={() => setActiveMainTab(activeMainTab === 0 ? 1 : 0)}
+              startIcon={<NavigationIcon />}
+            >
+              {activeMainTab === 0 ? 'Vedi Risultati' : 'Torna all\'Input'}
+            </Button>
+          )}
+        </Box>
+      </Box>
+
+      {/* Contenuto principale */}
+      <Box sx={{ flex: 1, overflow: 'hidden' }}>
+        {activeMainTab === 0 ? (
+          // Tab Input
+          <Grid container spacing={2} sx={{ height: '100%' }}>
+            {/* Colonna 1: Impostazioni pianificazione (1/3) */}
+            <Grid item xs={12} md={3} sx={{ height: '100%' }}>
+              <Paper sx={{ p: 2, height: '100%', overflow: 'auto' }}>
+                <Typography variant="h6" gutterBottom>
+                  Impostazioni Pianificazione
+                </Typography>
+                <Divider sx={{ mb: 2 }} />
+                <ScheduleSettings />
+              </Paper>
+            </Grid>
+            
+            {/* Colonna 2: Tabella POS con selezione (2/3) */}
+            <Grid item xs={12} md={9} sx={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
+              <Box sx={{ mb: 2, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <Typography variant="h6">
+                  Selezione POS da Visitare
+                </Typography>
+                <Button 
+                  variant="contained"
+                  color="primary"
+                  disabled={isOptimizing || locations.length < 2}
+                  onClick={handleOptimize}
+                  startIcon={isOptimizing ? <CircularProgress size={20} /> : null}
+                >
+                  {isOptimizing ? 'Ottimizzazione in corso...' : 'Ottimizza Percorso'}
+                </Button>
+              </Box>
+              
+              <Paper sx={{ p: 2, flex: 1, overflow: 'auto' }}>
+                <POSTableWithSelection />
+              </Paper>
+            </Grid>
+          </Grid>
+        ) : (
+          // Tab Risultati
+          <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column', gap: 2 }}>
+            {/* Riepilogo ottimizzazione in alto a tutta larghezza */}
+            <Paper sx={{ p: 2 }}>
+              <OptimizationResults stats={optimizationStats} />
+            </Paper>
+            
+            {/* Verifica che il piano abbia giorni */}
+            {optimizedRoute && optimizedRoute.days && optimizedRoute.days.length > 0 ? (
+              <Paper sx={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+                {/* Tab per i giorni */}
+                <Box sx={{ borderBottom: 1, borderColor: 'divider' }}>
+                  <Tabs 
+                    value={selectedDay}
+                    onChange={handleDayChange}
+                    variant="scrollable"
+                    scrollButtons="auto"
+                  >
+                    <Tab 
+                      key="all-days"
+                      icon={<CalendarIcon />}
+                      label="Programma Completo" 
+                      value={0}
+                    />
+
+                    {optimizedRoute.days.map((day, index) => (
+                      <Tab 
+                        key={`day-tab-${index}`}
+                        icon={<DayIcon />}
+                        label={`Giorno ${index + 1} - ${new Date(day.date).toLocaleDateString()}`} 
+                        value={index + 1}
+                      />
+                    ))}
+                  </Tabs>
+                </Box>
+                
+                {/* Contenuto: Programma Completo (tab 0) */}
+                <Box 
+                  key="all-days-content"
+                  sx={{ 
+                    flex: 1, 
+                    overflow: 'auto', 
+                    p: 1,
+                    display: selectedDay === 0 ? 'flex' : 'none',
+                    flexDirection: 'column',
+                    height: '100%',
+                    gap: 2
+                  }}
+                >
+                  {/* Mappa completa */}
+                  <Paper sx={{ height: '45%', p: 2 }}>
+                    <Typography variant="h6" gutterBottom>
+                      Mappa Globale - Programma Completo
+                    </Typography>
+                    <Divider sx={{ mb: 2 }} />
+                    <Box sx={{ height: 'calc(100% - 56px)' }}>
+                      <RouteMap 
+                        key="complete-route-map"
+                        route={optimizedRoute}
+                        selectedDay={0} // 0 indica tutti i giorni
+                        showConnections={true} // Mostra le connessioni tra i giorni
+                      />
+                    </Box>
+                  </Paper>
+                  
+                  {/* Timeline completa */}
+                  <Paper sx={{ flex: 1, p: 2, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+                    <Typography variant="h6" gutterBottom>
+                      Pianificazione Globale - {optimizedRoute.days.length} Giorni
+                    </Typography>
+                    <Divider sx={{ mb: 2 }} />
+                    <Box sx={{ flex: 1, overflow: 'auto' }}>
+                      <TimelineView 
+                        key="complete-timeline"
+                        route={optimizedRoute}
+                        selectedDay={0} // 0 indica tutti i giorni
+                        showDayConnections={true} // Mostra le connessioni tra i giorni
+                      />
+                    </Box>
+                  </Paper>
+                </Box>
+                
+                {/* Contenuto dei giorni singoli */}
+                {optimizedRoute.days.map((day, index) => (
+                  <Box 
+                    key={`day-content-${index + 1}`}
+                    sx={{ 
+                      flex: 1, 
+                      overflow: 'auto', 
+                      p: 1,
+                      display: selectedDay === index + 1 ? 'flex' : 'none',
+                      flexDirection: 'column',
+                      height: '100%',
+                      gap: 2
+                    }}
+                  >
+                    {/* Mappa del giorno */}
+                    <Paper sx={{ height: '45%', p: 2 }}>
+                      <Typography variant="h6" gutterBottom>
+                        Mappa delle Visite - Giorno {index + 1}
+                      </Typography>
+                      <Divider sx={{ mb: 2 }} />
+                      <Box sx={{ height: 'calc(100% - 56px)' }}>
+                        <RouteMap 
+                          key={`map-day-${index + 1}`}
+                          route={{
+                            ...optimizedRoute,
+                            days: [day] // Passa solo il giorno corrente
+                          }}
+                          selectedDay={1} // Sempre 1 perché passiamo solo un giorno
+                          singleDayMode={true} // Indica che stiamo lavorando in modalità giorno singolo
+                        />
+                      </Box>
+                    </Paper>
+                    
+                    {/* Timeline del giorno */}
+                    <Paper sx={{ flex: 1, p: 2, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+                      <Typography variant="h6" gutterBottom>
+                        Dettaglio Visite - Giorno {index + 1}
+                      </Typography>
+                      <Divider sx={{ mb: 2 }} />
+                      <Box sx={{ flex: 1, overflow: 'auto' }}>
+                        <TimelineView 
+                          key={`timeline-day-${index + 1}`}
+                          route={{
+                            ...optimizedRoute,
+                            days: [day] // Passa solo il giorno corrente
+                          }}
+                          selectedDay={1} // Sempre 1 perché passiamo solo un giorno
+                          singleDayMode={true} // Indica che stiamo lavorando in modalità giorno singolo
+                        />
+                      </Box>
+                    </Paper>
+                  </Box>
+                ))}
+              </Paper>
+            ) : (
+              <Paper sx={{ flex: 1, display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
+                <Typography color="text.secondary">
+                  Nessun piano disponibile. Ottimizza un percorso per visualizzare i risultati.
+                </Typography>
+              </Paper>
+            )}
+          </Box>
+        )}
+      </Box>
+
+      {/* Dialogs */}
+      <SavePlanDialog 
+        open={saveDialogOpen} 
+        onClose={() => setSaveDialogOpen(false)} 
+        onSave={(name) => {
+          showNotification(`Piano "${name}" salvato con successo`);
+          setSaveDialogOpen(false);
+        }}
+      />
+      
+      <LoadPlanDialog 
+        open={loadDialogOpen} 
+        onClose={() => setLoadDialogOpen(false)}
+        plans={savedPlans}
+        onLoad={(plan) => {
+          showNotification(`Piano "${plan.name}" caricato con successo`);
+          setLoadDialogOpen(false);
+          setActiveMainTab(1); // Passa alla tab dei risultati
+          setSelectedDay(0); // Seleziona la vista completa dopo il caricamento
+        }}
+      />
+
+      {/* Notifiche */}
+      <Snackbar 
+        open={notification.open} 
+        autoHideDuration={6000} 
+        onClose={handleCloseNotification}
+        anchorOrigin={{ vertical: 'bottom', horizontal: 'right' }}
+      >
+        <Alert onClose={handleCloseNotification} severity={notification.severity}>
+          {notification.message}
+        </Alert>
+      </Snackbar>
+      
+      {/* Error snackbar */}
+      <Snackbar 
+        open={!!error} 
+        autoHideDuration={6000} 
+        onClose={clearError}
+        anchorOrigin={{ vertical: 'bottom', horizontal: 'right' }}
+      >
+        <Alert onClose={clearError} severity="error">
+          {error}
+        </Alert>
+      </Snackbar>
+    </Box>
+  );
+};
+
+export default RouteOptimizerContainer;
+
+
+# ====== File: /var/www/html/insightg/wup/r_wup/src/components/modules/RouteOptimizer/index.jsx ======
+import React from 'react';
+import { Box } from '@mui/material';
+import RouteOptimizerContainer from './RouteOptimizerContainer';
+
+/**
+ * Componente di punto di ingresso per il modulo di ottimizzazione percorsi.
+ */
+const RouteOptimizerModule = () => {
+  return (
+    <Box 
+      sx={{ 
+        height: '100%', 
+        width: '100%', 
+        display: 'flex',
+        flexDirection: 'column',
+        overflow: 'hidden' 
+      }}
+    >
+      <RouteOptimizerContainer />
+    </Box>
+  );
+};
+
+export default RouteOptimizerModule;
+
+
+# ====== File: /var/www/html/insightg/wup/r_wup/src/components/modules/RouteOptimizer/services/route-optimizer-service.js ======
+/**
+ * Updated route-optimizer-service.js to work with Google Routes API
+ * This service handles route optimization on the frontend
+ */
+
+// Function to load the Google Maps API with Routes library support
+export const loadGoogleMapsAPI = (apiKey) => {
+    return new Promise((resolve, reject) => {
+      if (window.google && window.google.maps) {
+        resolve();
+        return;
+      }
+      
+      // Flag to track if we're already waiting for loading
+      if (window._googleMapsLoading) {
+        // If already waiting, wait for it to load
+        const checkLoaded = setInterval(() => {
+          if (window.google && window.google.maps) {
+            clearInterval(checkLoaded);
+            resolve();
+          }
+        }, 100);
+        return;
+      }
+      
+      window._googleMapsLoading = true;
+      
+      // Callback function
+      const callbackName = 'googleMapsCallback_' + Math.round(Math.random() * 1000000);
+      window[callbackName] = () => {
+        window._googleMapsLoading = false;
+        delete window[callbackName];
+        resolve();
+      };
+      
+      const script = document.createElement('script');
+      script.src = `https://maps.googleapis.com/maps/api/js?key=${apiKey}&libraries=places,geometry&v=weekly&callback=${callbackName}`;
+      script.async = true;
+      script.defer = true;
+      
+      script.onerror = () => {
+        window._googleMapsLoading = false;
+        delete window[callbackName];
+        reject(new Error('Google Maps API failed to load'));
+      };
+      
+      // Timeout for cases where the API doesn't respond
+      const timeout = setTimeout(() => {
+        if (!window.google || !window.google.maps) {
+          window._googleMapsLoading = false;
+          delete window[callbackName];
+          reject(new Error('Google Maps API loading timeout'));
+        }
+      }, 10000); // 10 second timeout
+      
+      // Modify the callback function to clear the timeout
+      const originalCallback = window[callbackName];
+      window[callbackName] = () => {
+        clearTimeout(timeout);
+        originalCallback();
+      };
+      
+      document.head.appendChild(script);
+    });
+  };
+  
+  // Format a date object to HH:MM format
+  export const formatTime = (date) => {
+    const hours = date.getHours().toString().padStart(2, '0');
+    const minutes = date.getMinutes().toString().padStart(2, '0');
+    return `${hours}:${minutes}`;
+  };
+  
+  // Calculate Haversine distance between two points (fallback)
+  export const calculateHaversineDistance = (lat1, lon1, lat2, lon2) => {
+    const R = 6371; // Earth's radius in km
+    const dLat = (lat2 - lat1) * Math.PI / 180;
+    const dLon = (lon2 - lon1) * Math.PI / 180;
+    
+    const a = 
+      Math.sin(dLat/2) * Math.sin(dLat/2) +
+      Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * 
+      Math.sin(dLon/2) * Math.sin(dLon/2);
+    
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+    const distance = R * c; // Distance in km
+    
+    return distance;
+  };
+  
+  // New function to request route optimization using Google Routes API directly from the frontend
+  // This is an alternative if you want to make the API call client-side
+  export const calculateRouteWithGoogleRoutesAPI = async (locations, apiKey, options = {}) => {
+    try {
+      // Make sure Google Maps API is loaded
+      await loadGoogleMapsAPI(apiKey);
+      
+      // Create waypoints array
+      const waypoints = locations.map(location => ({
+        location: {
+          latLng: {
+            latitude: location.lat,
+            longitude: location.lng
+          }
+        },
+        stopDuration: (location.visitDuration || 30) * 60, // Convert minutes to seconds
+        title: location.name || ""
+      }));
+      
+      // Prepare the request body
+      const requestBody = {
+        origin: waypoints[0],
+        destination: options.returnToStart ? waypoints[0] : waypoints[waypoints.length - 1],
+        intermediates: waypoints.slice(1, options.returnToStart ? undefined : -1),
+        travelMode: "DRIVE",
+        routingPreference: "TRAFFIC_AWARE",
+        computeAlternativeRoutes: false,
+        routeModifiers: {
+          avoidTolls: false,
+          avoidHighways: false,
+          avoidFerries: false
+        },
+        languageCode: "it-IT",
+        units: "METRIC"
+      };
+      
+      // Make the API request
+      const response = await fetch(
+        "https://routes.googleapis.com/directions/v2:computeRoutes", 
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-Goog-Api-Key": apiKey,
+            "X-Goog-FieldMask": "routes.duration,routes.distanceMeters,routes.legs.steps,routes.legs.distanceMeters,routes.legs.duration,routes.legs.polyline.encodedPolyline"
+          },
+          body: JSON.stringify(requestBody)
+        }
+      );
+      
+      if (!response.ok) {
+        throw new Error(`Google Routes API request failed: ${response.status} ${response.statusText}`);
+      }
+      
+      const data = await response.json();
+      
+      if (!data || !data.routes || data.routes.length === 0) {
+        throw new Error("No routes returned from Google Routes API");
+      }
+      
+      // Process the route data
+      const route = data.routes[0];
+      
+      // Total distance in kilometers
+      const totalDistanceKm = route.distanceMeters / 1000;
+      
+      // Total duration in minutes
+      const totalDurationMin = route.duration / 60;
+      
+      // Process legs (segments between waypoints)
+      const legs = route.legs;
+      
+      // Build the route result
+      const result = [];
+      
+      // Start time
+      let currentTime = new Date();
+      
+      // Add the start point
+      result.push({
+        ...locations[0],
+        arrivalTime: formatTime(currentTime),
+        departureTime: formatTime(currentTime),
+        visitDuration: 0
+      });
+      
+      // Extract polylines
+      const polylines = legs.map(leg => leg.polyline?.encodedPolyline).filter(Boolean);
+      
+      // Process each leg and waypoint
+      for (let i = 0; i < legs.length; i++) {
+        const leg = legs[i];
+        
+        // Update the time based on travel duration
+        const travelDurationMin = leg.duration / 60;
+        currentTime = new Date(currentTime.getTime() + travelDurationMin * 60 * 1000);
+        const arrivalTime = new Date(currentTime.getTime());
+        
+        // Get the corresponding location
+        const locationIndex = i + 1;
+        if (locationIndex < locations.length) {
+          const location = locations[locationIndex];
+          
+          // Add visit duration
+          const visitDuration = location.visitDuration || 30;
+          currentTime = new Date(currentTime.getTime() + visitDuration * 60 * 1000);
+          
+          result.push({
+            ...location,
+            arrivalTime: formatTime(arrivalTime),
+            departureTime: formatTime(currentTime),
+            visitDuration,
+            nextLegDistance: (i < legs.length - 1) ? (legs[i + 1].distanceMeters / 1000) : 0,
+            nextLegDuration: (i < legs.length - 1) ? (legs[i + 1].duration / 60) : 0
+          });
+        }
+      }
+      
+      return {
+        stops: result,
+        totalDistanceKm: totalDistanceKm.toFixed(1),
+        totalTimeMinutes: Math.round(totalDurationMin),
+        polylines,
+        returnToStart: options.returnToStart || false
+      };
+      
+    } catch (error) {
+      console.error('Error calculating route with Google Routes API:', error);
+      throw error;
+    }
+  };
+  
+  // Main function to optimize a route - this calls the backend which now uses Google Routes API
+  export const optimizeRoute = async (selectedPOS, settings) => {
+    try {
+      // Prepare the request data
+      const requestData = {
+        action: 'optimizeRoute',
+        data: {
+          startingPoint: settings.startingPoint || 'current',
+          customStartAddress: settings.customStartAddress || '',
+          returnToStart: settings.returnToStart !== undefined ? settings.returnToStart : true,
+          optimizationMethod: settings.optimizationMethod || 'distance',
+          selectedPosIds: selectedPOS.map(pos => ({
+            id: pos.id,
+            visitDuration: pos.visitDuration || 30,
+            priority: pos.priority || 'normal'
+          }))
+        }
+      };
+      
+      // Make the API call to the backend
+      const response = await fetch('/insightg/wup/backend/r_route_optimizer.php', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(requestData)
+      });
+      
+      // Parse the response
+      const data = await response.json();
+      
+      if (!data.success) {
+        throw new Error(data.error || 'Error optimizing route');
+      }
+      
+      return data.data;
+    } catch (error) {
+      console.error('Error optimizing route:', error);
+      throw error;
+    }
+  };
+  
+  export default {
+    loadGoogleMapsAPI,
+    formatTime,
+    calculateHaversineDistance,
+    calculateRouteWithGoogleRoutesAPI,
+    optimizeRoute
+  };
+
+
+# ====== File: /var/www/html/insightg/wup/r_wup/src/components/modules/RouteOptimizer/api/routeOptimizerApi.js ======
+/**
+ * API per l'ottimizzatore di percorsi
+ */
+
+// Funzione base per le chiamate API con miglior gestione degli errori
+const apiCall = async (endpoint, options = {}) => {
+  try {
+    const response = await fetch(endpoint, {
+      ...options,
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Requested-With': 'XMLHttpRequest',
+        'Cache-Control': 'no-cache, no-store, must-revalidate',
+        'Pragma': 'no-cache',
+        ...(options.headers || {})
+      }
+    });
+    
+    // Verifica response status prima di tentare il parsing
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status} ${response.statusText}`);
+    }
+    
+    // Ottieni il testo della risposta
+    const text = await response.text();
+    
+    // Verifica che il testo non sia vuoto
+    if (!text || text.trim() === '') {
+      return { success: false, error: 'Empty response from server' };
+    }
+    
+    try {
+      // Tenta il parsing del JSON
+      const data = JSON.parse(text);
+      return data;
+    } catch (parseError) {
+      console.error('JSON parse error:', parseError, 'Raw response:', text.substring(0, 500));
+      throw new Error(`Invalid JSON response: ${parseError.message}`);
+    }
+  } catch (error) {
+    console.error('API call error:', error);
+    return {
+      success: false,
+      error: error.message || 'Errore nella comunicazione con il server'
+    };
+  }
+};
+
+/**
+ * Recupera la chiave API di Google Maps dal backend
+ */
+export const fetchGoogleMapsApiKey = async () => {
+  const result = await apiCall('../../backend/r_route_optimizer.php?action=getGoogleMapsApiKey');
+  
+  if (!result.success) {
+    throw new Error(result.error || 'Errore nel recupero della chiave API');
+  }
+  
+  return result.data;
+};
+
+/**
+ * Recupera i POS con indirizzi per l'autosuggest
+ */
+export const fetchPOSLocations = async (searchTerm = '') => {
+  try {
+    console.log('Fetching POS locations with search term:', searchTerm);
+    const result = await apiCall(`../../backend/r_route_optimizer.php?action=getPOSLocations&search=${encodeURIComponent(searchTerm)}`);
+    
+    console.log('POS locations response:', result.success ? `Success: ${result.data?.length || 0} items` : `Error: ${result.error}`);
+    
+    return result;
+  } catch (error) {
+    console.error('Error fetching POS locations:', error);
+    return { 
+      success: false, 
+      error: error.message || 'Errore nel recupero dei POS'
+    };
+  }
+};
+
+/**
+ * Ottimizza il percorso tra i punti selezionati
+ */
+export const optimizeRoute = async (locations, settings) => {
+  const result = await apiCall('../../backend/r_route_optimizer.php', {
+    method: 'POST',
+    body: JSON.stringify({
+      action: 'optimizeRoute',
+      locations,
+      settings
+    })
+  });
+  
+  if (!result.success) {
+    throw new Error(result.error || 'Errore nell\'ottimizzazione del percorso');
+  }
+  
+  return result.data;
+};
+
+/**
+ * Salva un piano di percorso sul server
+ */
+export const savePlan = async (planData) => {
+  const result = await apiCall('../../backend/r_route_optimizer.php', {
+    method: 'POST',
+    body: JSON.stringify({
+      action: 'savePlan',
+      plan: planData
+    })
+  });
+  
+  if (!result.success) {
+    throw new Error(result.error || 'Errore nel salvataggio del piano');
+  }
+  
+  return result.data;
+};
+
+/**
+ * Carica l'elenco dei piani salvati
+ */
+export const loadPlans = async () => {
+  try {
+    const result = await apiCall('../../backend/r_route_optimizer.php?action=getPlans');
+    return result;
+  } catch (error) {
+    console.error('Error loading plans:', error);
+    return { 
+      success: false, 
+      error: error.message || 'Errore nel caricamento dei piani'
+    };
+  }
+};
+
+/**
+ * Carica un piano specifico
+ */
+export const loadPlan = async (planId) => {
+  try {
+    const result = await apiCall(`../../backend/r_route_optimizer.php?action=getPlan&id=${planId}`);
+    return result;
+  } catch (error) {
+    console.error('Error loading plan:', error);
+    return { 
+      success: false, 
+      error: error.message || 'Errore nel caricamento del piano'
+    };
+  }
+};
+
+/**
+ * Elimina un piano salvato
+ */
+export const deletePlan = async (planId) => {
+  const result = await apiCall('../../backend/r_route_optimizer.php', {
+    method: 'POST',
+    body: JSON.stringify({
+      action: 'deletePlan',
+      id: planId
+    })
+  });
+  
+  if (!result.success) {
+    throw new Error(result.error || 'Errore nell\'eliminazione del piano');
+  }
+  
+  return result.data;
+};
+
+/**
+ * Geocodifica un indirizzo
+ */
+export const geocodeAddress = async (address) => {
+  const result = await apiCall(`../../backend/r_route_optimizer.php?action=geocodeAddress&address=${encodeURIComponent(address)}`);
+  
+  if (!result.success) {
+    throw new Error(result.error || 'Errore nella geocodifica dell\'indirizzo');
+  }
+  
+  return result.data;
+};
+
+/**
+ * Ottiene un percorso stradale tra due punti
+ */
+export const getRouteBetweenPoints = async (origin, destination) => {
+  const result = await apiCall('../../backend/r_route_optimizer.php', {
+    method: 'POST',
+    body: JSON.stringify({
+      action: 'getRouteBetweenPoints',
+      origin,
+      destination
+    })
+  });
+  
+  if (!result.success) {
+    throw new Error(result.error || 'Errore nel calcolo del percorso');
+  }
+  
+  return result.data;
+};
+
+
+# ====== File: /var/www/html/insightg/wup/r_wup/src/components/modules/RouteOptimizer/components/RouteMap.jsx ======
+import React, { useEffect, useRef, useState } from 'react';
+import {
+  Box,
+  Typography,
+  Paper,
+  CircularProgress,
+  Alert
+} from '@mui/material';
+import { useTheme } from '@mui/material/styles';
+import { fetchGoogleMapsApiKey } from '../api/routeOptimizerApi';
+
+const RouteMap = ({ route, selectedDay, singleDayMode = false, showConnections = false }) => {
+  const mapRef = useRef(null);
+  const [mapInstance, setMapInstance] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+  const [apiKey, setApiKey] = useState(null);
+  const [routesError, setRoutesError] = useState(null);
+  const theme = useTheme();
+  
+  // Per debug
+  useEffect(() => {
+    console.log("RouteMap mounted/updated with selectedDay:", selectedDay, "singleDayMode:", singleDayMode);
+    
+    // Cleanup function
+    return () => {
+      console.log("RouteMap unmounting for day:", selectedDay);
+    };
+  }, [selectedDay, singleDayMode]);
+  
+  // Prima ottieni la chiave API dal backend
+  useEffect(() => {
+    const getApiKey = async () => {
+      try {
+        const response = await fetchGoogleMapsApiKey();
+        setApiKey(response.apiKey);
+      } catch (error) {
+        console.error("Error fetching API key:", error);
+        setError("Impossibile ottenere la chiave API di Google Maps");
+        setLoading(false);
+      }
+    };
+    
+    getApiKey();
+  }, []);
+  
+  // Carica lo script di Google Maps
+  useEffect(() => {
+    if (!apiKey) return; // Attendi la chiave API
+    
+    const loadGoogleMapsScript = () => {
+      setLoading(true);
+      setError(null);
+      
+      // Verifica se l'API è già caricata
+      if (window.google && window.google.maps) {
+        initializeMap();
+        return;
+      }
+      
+      // Callback di Google Maps
+      window.initMap = () => {
+        initializeMap();
+      };
+      
+      // Carica lo script con le librerie necessarie
+      const script = document.createElement('script');
+      script.src = `https://maps.googleapis.com/maps/api/js?key=${apiKey}&callback=initMap&libraries=places,geometry&v=beta`;
+      script.async = true;
+      script.defer = true;
+      script.onerror = () => {
+        setError('Errore nel caricamento di Google Maps');
+        setLoading(false);
+      };
+      
+      document.head.appendChild(script);
+      
+      return () => {
+        window.initMap = null;
+        if (script.parentNode) {
+          script.parentNode.removeChild(script);
+        }
+      };
+    };
+    
+    loadGoogleMapsScript();
+  }, [apiKey]);
+  
+  // Inizializza la mappa
+  const initializeMap = () => {
+    try {
+      if (!mapRef.current) return;
+      
+      const mapOptions = {
+        center: { lat: 42.504, lng: 12.574 }, // Centro dell'Italia
+        zoom: 6,
+        mapTypeControl: false,
+        streetViewControl: false,
+        fullscreenControl: true,
+        styles: theme.palette.mode === 'dark' ? [
+          { elementType: 'geometry', stylers: [{ color: '#242f3e' }] },
+          { elementType: 'labels.text.stroke', stylers: [{ color: '#242f3e' }] },
+          { elementType: 'labels.text.fill', stylers: [{ color: '#746855' }] },
+        ] : []
+      };
+      
+      const map = new window.google.maps.Map(mapRef.current, mapOptions);
+      setMapInstance(map);
+      setLoading(false);
+      
+      // Traccia il percorso se disponibile
+      if (route && route.days) {
+        drawRoute(map, route, selectedDay);
+      }
+    } catch (err) {
+      console.error('Error initializing map:', err);
+      setError('Errore nell\'inizializzazione della mappa');
+      setLoading(false);
+    }
+  };
+  
+  // Aggiorna la mappa quando cambiano i dati del percorso o il giorno selezionato
+  useEffect(() => {
+    console.log("RouteMap useEffect triggered with selectedDay:", selectedDay);
+    if (mapInstance && route && route.days) {
+      drawRoute(mapInstance, route, selectedDay);
+    }
+  }, [route, selectedDay, singleDayMode, showConnections, mapInstance]);
+  
+  // Funzione per richiedere percorso all'API Routes 
+  const requestRouteFromBackend = async (origin, destination) => {
+    try {
+      // Questa funzione chiama il backend per ottenere il percorso
+      const response = await fetch('../../backend/r_route_optimizer.php', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          action: 'getRouteBetweenPoints',
+          origin: {
+            lat: origin.lat(),
+            lng: origin.lng()
+          },
+          destination: {
+            lat: destination.lat(),
+            lng: destination.lng()
+          }
+        })
+      });
+      
+      if (!response.ok) {
+        throw new Error(`HTTP error ${response.status}`);
+      }
+      
+      const result = await response.json();
+      
+      if (!result.success) {
+        throw new Error(result.error || 'Errore nel calcolo del percorso');
+      }
+      
+      // Decodifica la polyline se fornita come stringa codificata
+      if (result.data.encodedPolyline) {
+        return window.google.maps.geometry.encoding.decodePath(result.data.encodedPolyline);
+      }
+      
+      // Altrimenti restituisci i punti del percorso
+      return result.data.path || [origin, destination];
+    } catch (error) {
+      console.error('Error requesting route from backend:', error);
+      // Ritorna un percorso diretto in caso di errore
+      return [origin, destination];
+    }
+  };
+  
+  // Disegna il percorso sulla mappa
+  const drawRoute = async (map, route, dayIndex) => {
+    console.log("Drawing route for day:", dayIndex, "singleDayMode:", singleDayMode);
+    
+    // Pulisci tutti i percorsi e marker precedenti
+    if (window.routePolylines) {
+      window.routePolylines.forEach(poly => poly.setMap(null));
+    }
+    if (window.routeMarkers) {
+      window.routeMarkers.forEach(marker => marker.setMap(null));
+    }
+    
+    window.routePolylines = [];
+    window.routeMarkers = [];
+    
+    const infoWindow = new window.google.maps.InfoWindow();
+    const bounds = new window.google.maps.LatLngBounds();
+    
+    setRoutesError(null);
+    
+    // Colori per i diversi giorni (palette estesa)
+    const dayColors = [
+      "#1976d2", // Blu
+      "#2e7d32", // Verde
+      "#c62828", // Rosso
+      "#7b1fa2", // Viola
+      "#f57c00", // Arancione
+      "#0097a7", // Ciano
+      "#d81b60", // Rosa
+      "#00695c", // Verde acqua
+      "#e65100", // Arancione scuro
+      "#283593", // Blu scuro
+      "#4a148c", // Viola scuro
+      "#827717"  // Olivastro
+    ];
+    
+    // Determina quali giorni visualizzare
+    let daysToShow = [];
+    
+    if (dayIndex === 0 && !singleDayMode) {
+      // Mostra tutti i giorni nella vista completa
+      daysToShow = route.days;
+    } else if (singleDayMode) {
+      // In modalità giorno singolo, mostra solo il giorno selezionato
+      const dayToShow = route.days[dayIndex - 1] || route.days[0];
+      daysToShow = [dayToShow];
+    } else {
+      // In altri casi (giorno specifico)
+      const dayToShow = route.days[dayIndex - 1];
+      if (dayToShow) {
+        daysToShow = [dayToShow];
+      }
+    }
+    
+    if (daysToShow.length === 0) {
+      setRoutesError("Nessun giorno valido da visualizzare.");
+      return;
+    }
+    
+    // Loop per ogni giorno da visualizzare
+    for (let i = 0; i < daysToShow.length; i++) {
+      const day = daysToShow[i];
+      const dayColorIndex = singleDayMode ? 0 : i % dayColors.length;
+      const dayColor = dayColors[dayColorIndex];
+      
+      if (!day.visits || day.visits.length === 0) {
+        continue;
+      }
+      
+      const dayNumber = singleDayMode ? 1 : (route.days.indexOf(day) + 1);
+      
+      // Filtra e mappa le visite con coordinate valide (escludendo la pausa pranzo)
+      const dayVisits = day.visits
+        .filter(visit => 
+          visit.location && 
+          visit.location.lat && 
+          visit.location.lng && 
+          !visit.location.is_lunch_break
+        )
+        .map((visit, visitIndex) => {
+          const position = new window.google.maps.LatLng(
+            parseFloat(visit.location.lat),
+            parseFloat(visit.location.lng)
+          );
+          
+          bounds.extend(position);
+          
+          // Determina se è un punto speciale (partenza o ritorno)
+          const isStartPoint = visit.location.is_start_point === true;
+          const isEndPoint = visit.travelInfo && visit.travelInfo.isReturn === true;
+          
+          // Prepara l'icona appropriata
+          const icon = {
+            path: window.google.maps.SymbolPath.CIRCLE,
+            fillColor: isStartPoint ? '#4CAF50' : isEndPoint ? '#F44336' : dayColor,
+            fillOpacity: 1,
+            strokeWeight: isStartPoint || isEndPoint ? 2 : 0,
+            strokeColor: '#FFFFFF',
+            scale: 14
+          };
+          
+          // Etichetta per il marker - Aggiungiamo numero giorno in vista completa
+          const label = {
+            text: isStartPoint 
+              ? (singleDayMode ? 'P' : `${dayNumber}P`) 
+              : isEndPoint 
+                ? (singleDayMode ? 'A' : `${dayNumber}A`) 
+                : (singleDayMode ? (visitIndex + 1).toString() : `${dayNumber}.${visitIndex + 1}`),
+            color: 'white'
+          };
+          
+          // Crea marker
+          const marker = new window.google.maps.Marker({
+            position,
+            map,
+            title: `${singleDayMode ? '' : 'Giorno ' + dayNumber + ' - '}${visit.location.name}${isStartPoint ? ' (Partenza)' : isEndPoint ? ' (Ritorno)' : ''}`,
+            label: label,
+            icon: icon
+          });
+          
+          if (!window.routeMarkers) window.routeMarkers = [];
+          window.routeMarkers.push(marker);
+          
+          // Crea infowindow con dettagli
+          const contentString = `
+            <div style="padding: 8px;">
+              <h3 style="margin-top: 0;">
+                ${singleDayMode ? '' : '<span style="color:' + dayColor + ';">Giorno ' + dayNumber + '</span> - '}
+                ${visit.location.name}${isStartPoint ? ' (Partenza)' : isEndPoint ? ' (Ritorno)' : ''}
+              </h3>
+              <p style="margin: 4px 0;"><strong>Indirizzo:</strong> ${visit.location.address}</p>
+              <p style="margin: 4px 0;"><strong>Arrivo:</strong> ${new Date(visit.arrivalTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</p>
+              ${!isStartPoint && !isEndPoint ? `<p style="margin: 4px 0;"><strong>Durata:</strong> ${visit.location.duration} min</p>` : ''}
+              ${visit.location.notes ? `<p style="margin: 4px 0;"><strong>Note:</strong> ${visit.location.notes}</p>` : ''}
+            </div>
+          `;
+          
+          marker.addListener('click', () => {
+            infoWindow.setContent(contentString);
+            infoWindow.open(map, marker);
+          });
+          
+          return { position, visit };
+        });
+      
+      if (dayVisits.length === 0) {
+        continue;
+      }
+      
+      console.log(`Valid visits for day ${dayNumber}:`, dayVisits.length);
+      
+      // Disegna i segmenti del percorso tra i punti
+      for (let j = 0; j < dayVisits.length - 1; j++) {
+        const origin = dayVisits[j].position;
+        const destination = dayVisits[j + 1].position;
+        
+        try {
+          // Richiedi il percorso dal backend
+          const path = await requestRouteFromBackend(origin, destination);
+          
+          // Crea la polyline
+          const polyline = new window.google.maps.Polyline({
+            path: path,
+            geodesic: true,
+            strokeColor: dayColor,
+            strokeOpacity: 0.8,
+            strokeWeight: 4,
+            map: map
+          });
+          
+          if (!window.routePolylines) window.routePolylines = [];
+          window.routePolylines.push(polyline);
+        } catch (error) {
+          console.error(`Error drawing route segment ${j}:`, error);
+          
+          // Fallback a linea diretta
+          const polyline = new window.google.maps.Polyline({
+            path: [origin, destination],
+            geodesic: true,
+            strokeColor: dayColor,
+            strokeOpacity: 0.5,
+            strokeWeight: 2,
+            strokePattern: [10, 5], // linea tratteggiata
+            map: map
+          });
+          
+          if (!window.routePolylines) window.routePolylines = [];
+          window.routePolylines.push(polyline);
+        }
+      }
+    }
+    
+    // In modalità vista completa con connessioni, aggiungi linee tratteggiate tra i giorni
+    if (showConnections && daysToShow.length > 1) {
+      for (let i = 0; i < daysToShow.length - 1; i++) {
+        const currentDay = daysToShow[i];
+        const nextDay = daysToShow[i + 1];
+        
+        if (!currentDay.visits || !nextDay.visits || 
+            currentDay.visits.length === 0 || nextDay.visits.length === 0) {
+          continue;
+        }
+        
+        // Trova l'ultima visita del giorno corrente (esclusa la pausa pranzo)
+        let lastVisit = null;
+        for (let j = currentDay.visits.length - 1; j >= 0; j--) {
+          if (!currentDay.visits[j].location.is_lunch_break) {
+            lastVisit = currentDay.visits[j];
+            break;
+          }
+        }
+        
+        // Trova la prima visita del giorno successivo (esclusa la pausa pranzo)
+        let firstVisit = null;
+        for (let j = 0; j < nextDay.visits.length; j++) {
+          if (!nextDay.visits[j].location.is_lunch_break) {
+            firstVisit = nextDay.visits[j];
+            break;
+          }
+        }
+        
+        if (!lastVisit || !firstVisit || 
+            !lastVisit.location.lat || !firstVisit.location.lat) {
+          continue;
+        }
+        
+        const lastPosition = new window.google.maps.LatLng(
+          parseFloat(lastVisit.location.lat),
+          parseFloat(lastVisit.location.lng)
+        );
+        
+        const firstPosition = new window.google.maps.LatLng(
+          parseFloat(firstVisit.location.lat),
+          parseFloat(firstVisit.location.lng)
+        );
+        
+        // Calcola il punto medio tra i due punti
+        const midPoint = new window.google.maps.LatLng(
+          (lastPosition.lat() + firstPosition.lat()) / 2,
+          (lastPosition.lng() + firstPosition.lng()) / 2
+        );
+        
+        // Crea la linea tratteggiata tra i giorni
+        const connectionLine = new window.google.maps.Polyline({
+          path: [lastPosition, firstPosition],
+          geodesic: true,
+          strokeColor: '#9E9E9E', // Grigio per le connessioni
+          strokeOpacity: 0.6,
+          strokeWeight: 2,
+          strokePattern: [10, 5], // Linea tratteggiata
+          map: map
+        });
+        
+        if (!window.routePolylines) window.routePolylines = [];
+        window.routePolylines.push(connectionLine);
+        
+        // Aggiungi un marker per indicare la connessione
+        const connectionMarker = new window.google.maps.Marker({
+          position: midPoint,
+          map: map,
+          icon: {
+            path: window.google.maps.SymbolPath.CIRCLE,
+            fillColor: '#9E9E9E',
+            fillOpacity: 0.8,
+            strokeColor: '#FFFFFF',
+            strokeWeight: 1,
+            scale: 7
+          },
+          label: {
+            text: '→',
+            color: 'white',
+            fontSize: '10px'
+          },
+          title: `Connessione tra Giorno ${i + 1} e Giorno ${i + 2}`
+        });
+        
+        if (!window.routeMarkers) window.routeMarkers = [];
+        window.routeMarkers.push(connectionMarker);
+        
+        // Crea un'infowindow per la connessione
+        const distance = window.google.maps.geometry.spherical.computeDistanceBetween(
+          lastPosition, firstPosition
+        );
+        
+        const connectionInfo = `
+          <div style="padding: 8px;">
+            <h3 style="margin-top: 0;">Connessione tra Giorni</h3>
+            <p><strong>Da:</strong> Giorno ${i + 1} - ${lastVisit.location.name}</p>
+            <p><strong>A:</strong> Giorno ${i + 2} - ${firstVisit.location.name}</p>
+            <p><strong>Distanza:</strong> ${(distance / 1000).toFixed(1)} km</p>
+          </div>
+        `;
+        
+        connectionMarker.addListener('click', () => {
+          infoWindow.setContent(connectionInfo);
+          infoWindow.open(map, connectionMarker);
+        });
+      }
+    }
+    
+    // Adatta la mappa per mostrare tutti i marker
+    if (!bounds.isEmpty()) {
+      map.fitBounds(bounds);
+      
+      // Livello di zoom appropriato
+      window.google.maps.event.addListenerOnce(map, 'bounds_changed', () => {
+        if (map.getZoom() > 15) {
+          map.setZoom(15);
+        }
+      });
+    }
+  };
+
+  return (
+    <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
+      {routesError && (
+        <Alert severity="warning" sx={{ mb: 1 }}>
+          {routesError}
+        </Alert>
+      )}
+      
+      <Paper 
+        sx={{ 
+          flexGrow: 1, 
+          overflow: 'hidden', 
+          display: 'flex', 
+          alignItems: 'center', 
+          justifyContent: 'center',
+          position: 'relative'
+        }} 
+        elevation={0} 
+        variant="outlined"
+      >
+        {loading && (
+          <Box sx={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -50%)', zIndex: 10 }}>
+            <CircularProgress />
+          </Box>
+        )}
+        
+        {error && (
+          <Typography color="error" align="center">
+            {error}
+          </Typography>
+        )}
+        
+        <Box
+          ref={mapRef}
+          sx={{
+            width: '100%',
+            height: '100%',
+            opacity: loading ? 0.5 : 1,
+            transition: 'opacity 0.3s'
+          }}
+        />
+      </Paper>
+    </Box>
+  );
+};
+
+export default RouteMap;
+
+
+# ====== File: /var/www/html/insightg/wup/r_wup/src/components/modules/RouteOptimizer/components/OptimizationResults.jsx ======
+import React from 'react';
+import {
+  Box,
+  Typography,
+  Divider,
+  Chip,
+  Grid
+} from '@mui/material';
+import {
+  DirectionsCar as CarIcon,
+  AccessTime as TimeIcon,
+  Flag as FlagIcon,
+  Place as PlaceIcon,
+  Today as DateIcon
+} from '@mui/icons-material';
+
+const OptimizationResults = ({ stats }) => {
+  if (!stats) {
+    return (
+      <Box sx={{ p: 2, textAlign: 'center' }}>
+        <Typography color="text.secondary">
+          Nessuna statistica disponibile
+        </Typography>
+      </Box>
+    );
+  }
+
+  // Formatta la durata in ore e minuti (arrotondata al minuto)
+  const formatDuration = (minutes) => {
+    // Arrotondiamo al minuto intero
+    minutes = Math.round(minutes);
+    
+    const hours = Math.floor(minutes / 60);
+    const mins = minutes % 60;
+    
+    if (hours === 0) {
+      return `${mins} min`;
+    } else if (mins === 0) {
+      return `${hours} h`;
+    } else {
+      return `${hours} h ${mins} min`;
+    }
+  };
+
+  return (
+    <Box>
+      <Grid container spacing={2} alignItems="center">
+        <Grid item xs={12} md={3}>
+          <Typography variant="h6">
+            Riepilogo Ottimizzazione
+          </Typography>
+        </Grid>
+        
+        <Grid item xs={6} md={1.5}>
+          <Box sx={{ display: 'flex', alignItems: 'center' }}>
+            <DateIcon sx={{ mr: 1, color: 'primary.main' }} />
+            <Box>
+              <Typography variant="caption" color="text.secondary">Durata</Typography>
+              <Typography variant="body1" sx={{ fontWeight: 'medium' }}>
+                {stats.totalDays} {stats.totalDays === 1 ? 'giorno' : 'giorni'}
+              </Typography>
+            </Box>
+          </Box>
+        </Grid>
+        
+        <Grid item xs={6} md={1.5}>
+          <Box sx={{ display: 'flex', alignItems: 'center' }}>
+            <PlaceIcon sx={{ mr: 1, color: 'primary.main' }} />
+            <Box>
+              <Typography variant="caption" color="text.secondary">Punti</Typography>
+              <Typography variant="body1" sx={{ fontWeight: 'medium' }}>
+                {stats.totalLocations} POS
+              </Typography>
+            </Box>
+          </Box>
+        </Grid>
+        
+        <Grid item xs={6} md={2}>
+          <Box sx={{ display: 'flex', alignItems: 'center' }}>
+            <TimeIcon sx={{ mr: 1, color: 'primary.main' }} />
+            <Box>
+              <Typography variant="caption" color="text.secondary">Tempo Visite</Typography>
+              <Typography variant="body1" sx={{ fontWeight: 'medium' }}>
+                {formatDuration(stats.totalVisitDuration)}
+              </Typography>
+            </Box>
+          </Box>
+        </Grid>
+        
+        <Grid item xs={6} md={2}>
+          <Box sx={{ display: 'flex', alignItems: 'center' }}>
+            <CarIcon sx={{ mr: 1, color: 'primary.main' }} />
+            <Box>
+              <Typography variant="caption" color="text.secondary">Tempo Viaggio</Typography>
+              <Typography variant="body1" sx={{ fontWeight: 'medium' }}>
+                {formatDuration(stats.totalTravelDuration)}
+              </Typography>
+            </Box>
+          </Box>
+        </Grid>
+        
+        <Grid item xs={12} md={2}>
+          <Box sx={{ display: 'flex', alignItems: 'center' }}>
+            <CarIcon sx={{ mr: 1, color: 'primary.main' }} />
+            <Box>
+              <Typography variant="caption" color="text.secondary">Distanza</Typography>
+              <Typography variant="body1" sx={{ fontWeight: 'medium' }}>
+                {Math.round(stats.totalDistance / 100) / 10} km
+              </Typography>
+            </Box>
+          </Box>
+        </Grid>
+      </Grid>
+      
+      <Divider sx={{ my: 1.5 }} />
+      
+      <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 2 }}>
+        <Typography variant="subtitle2">Priorità:</Typography>
+        <Chip 
+          size="small" 
+          label={`${stats.highPriorityCount || 0} alta priorità`} 
+          color="error" 
+          variant="outlined" 
+        />
+        <Chip 
+          size="small" 
+          label={`${stats.normalPriorityCount || 0} normale`} 
+          color="primary" 
+          variant="outlined" 
+        />
+        <Chip 
+          size="small" 
+          label={`${stats.lowPriorityCount || 0} bassa priorità`} 
+          color="default" 
+          variant="outlined" 
+        />
+      </Box>
+    </Box>
+  );
+};
+
+export default OptimizationResults;
+
+
+# ====== File: /var/www/html/insightg/wup/r_wup/src/components/modules/RouteOptimizer/components/POSTableWithSelection.jsx ======
+import React, { useState, useEffect } from 'react';
+import {
+  Box,
+  TextField,
+  InputAdornment,
+  TableContainer,
+  Table,
+  TableHead,
+  TableRow,
+  TableCell,
+  TableBody,
+  TablePagination,
+  IconButton,
+  FormControl,
+  Select,
+  MenuItem,
+  Typography,
+  Divider,
+  Button,
+  Paper,
+  CircularProgress
+} from '@mui/material';
+import {
+  Search as SearchIcon,
+  ClearAll as ClearIcon,
+  Place as PlaceIcon,
+  Add as AddIcon,
+  Delete as DeleteIcon
+} from '@mui/icons-material';
+import { useRouteOptimizerStore } from '../stores/routeOptimizerStore';
+import { fetchPOSLocations } from '../api/routeOptimizerApi';
+
+const POSTableWithSelection = () => {
+  const { 
+    availablePOS, 
+    locations, 
+    addLocation, 
+    removeLocation, 
+    updateLocation,
+    setAvailablePOS
+  } = useRouteOptimizerStore();
+  
+  const [searchQuery, setSearchQuery] = useState('');
+  const [isSearching, setIsSearching] = useState(false);
+  
+  // Paginazione
+  const [page, setPage] = useState(0);
+  const [rowsPerPage, setRowsPerPage] = useState(15);
+
+  // Effettua la ricerca sul server quando cambia il termine di ricerca
+  const handleSearch = async () => {
+    try {
+      setIsSearching(true);
+      const response = await fetchPOSLocations(searchQuery);
+      
+      if (!response || !response.success) {
+        console.error("Error in search response:", response?.error || "Unknown error");
+        setAvailablePOS([]);
+        return;
+      }
+      
+      const results = response.data || [];
+      
+      // Verifica che results sia un array
+      if (!Array.isArray(results)) {
+        console.error("Search results are not an array:", results);
+        setAvailablePOS([]);
+        return;
+      }
+      
+      setAvailablePOS(results);
+      setPage(0);
+    } catch (error) {
+      console.error("Error searching POS:", error);
+      setAvailablePOS([]);
+    } finally {
+      setIsSearching(false);
+    }
+  };
+
+  // Gestisce l'invio della ricerca
+  const handleSearchSubmit = (e) => {
+    e.preventDefault();
+    handleSearch();
+  };
+
+  // Genera dati di location
+  const createLocationData = (pos) => {
+    return {
+      id: `pos_${pos.id}`,
+      name: pos.nome_account,
+      address: getFullAddress(pos),
+      sf_territory: pos.sf_territory || "-",
+      sf_region: pos.sf_region || "-",
+      duration: 30, // Default duration
+      priority: 'normal', // Default priority
+      notes: '',
+      lat: pos.lat,
+      lng: pos.lng
+    };
+  };
+
+  // Aggiunge un POS alla selezione
+  const handleAddPOS = (pos) => {
+    const locationId = `pos_${pos.id}`;
+    if (!locations.some(loc => loc.id === locationId)) {
+      addLocation(createLocationData(pos));
+    }
+  };
+
+  // Rimuove un POS dalla selezione
+  const handleRemovePOS = (locationId) => {
+    removeLocation(locationId);
+  };
+
+  // Verifica se un POS è selezionato
+  const isSelected = (pos) => {
+    return locations.some(loc => loc.id === `pos_${pos.id}`);
+  };
+
+  // Gestione modifica durata
+  const handleChangeDuration = (locationId, newDuration) => {
+    updateLocation(locationId, { duration: newDuration });
+  };
+  
+  // Gestione modifica priorità
+  const handleChangePriority = (locationId, newPriority) => {
+    updateLocation(locationId, { priority: newPriority });
+  };
+
+  const getFullAddress = (pos) => {
+    const parts = [];
+    if (pos.indirizzo_spedizioni) parts.push(pos.indirizzo_spedizioni);
+    if (pos.citt_spedizioni) parts.push(pos.citt_spedizioni);
+    if (pos.cap_spedizioni) parts.push(pos.cap_spedizioni);
+    return parts.join(', ') || "Indirizzo non disponibile";
+  };
+
+  // Gestione paginazione
+  const handleChangePage = (event, newPage) => {
+    setPage(newPage);
+  };
+
+  const handleChangeRowsPerPage = (event) => {
+    setRowsPerPage(parseInt(event.target.value, 10));
+    setPage(0);
+  };
+
+  // Funzione per cancellare la ricerca
+  const clearSearch = async () => {
+    setSearchQuery('');
+    try {
+      setIsSearching(true);
+      const response = await fetchPOSLocations('');
+      
+      if (!response || !response.success) {
+        console.error("Error in clear search response:", response?.error || "Unknown error");
+        setAvailablePOS([]);
+        return;
+      }
+      
+      const results = response.data || [];
+      
+      // Verifica che results sia un array
+      if (!Array.isArray(results)) {
+        console.error("Clear search results are not an array:", results);
+        setAvailablePOS([]);
+        return;
+      }
+      
+      setAvailablePOS(results);
+      setPage(0);
+    } catch (error) {
+      console.error("Error clearing search:", error);
+      setAvailablePOS([]);
+    } finally {
+      setIsSearching(false);
+    }
+  };
+
+  // Calcola righe da visualizzare con paginazione
+  const displayedRows = Array.isArray(availablePOS) 
+    ? availablePOS.slice(page * rowsPerPage, page * rowsPerPage + rowsPerPage)
+    : [];
+
+  // Carica i dati iniziali
+  useEffect(() => {
+    handleSearch();
+  }, []);
+
+  return (
+    <Box sx={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+      {/* Sezione 1: Punti Selezionati */}
+      <Paper variant="outlined" sx={{ p: 2, mb: 2 }}>
+        <Typography variant="subtitle1" fontWeight="medium" gutterBottom>
+          Punti Selezionati ({locations.length})
+        </Typography>
+
+        {locations.length === 0 ? (
+          <Typography color="text.secondary" variant="body2">
+            Nessun POS selezionato. Aggiungi POS dalla lista sottostante.
+          </Typography>
+        ) : (
+          <TableContainer sx={{ maxHeight: 200 }}>
+            <Table size="small" stickyHeader>
+              <TableHead>
+                <TableRow>
+                  <TableCell>Nome POS</TableCell>
+                  <TableCell>Durata</TableCell>
+                  <TableCell>Priorità</TableCell>
+                  <TableCell align="right" width="40px">Azioni</TableCell>
+                </TableRow>
+              </TableHead>
+              <TableBody>
+                {locations.map(location => (
+                  <TableRow key={location.id} hover>
+                    <TableCell>
+                      <Typography variant="body2">{location.name}</Typography>
+                      <Typography variant="caption" color="text.secondary">{location.sf_territory}</Typography>
+                    </TableCell>
+                    <TableCell>
+                      <TextField
+                        type="number"
+                        size="small"
+                        value={location.duration}
+                        onChange={(e) => handleChangeDuration(location.id, parseInt(e.target.value) || 30)}
+                        InputProps={{
+                          endAdornment: <InputAdornment position="end">min</InputAdornment>,
+                          sx: { width: '90px' }
+                        }}
+                        inputProps={{ min: 5, max: 240, step: 5 }}
+                      />
+                    </TableCell>
+                    <TableCell>
+                      <FormControl size="small" fullWidth>
+                        <Select
+                          value={location.priority}
+                          onChange={(e) => handleChangePriority(location.id, e.target.value)}
+                          sx={{ minWidth: '100px' }}
+                        >
+                          <MenuItem value="high">Alta</MenuItem>
+                          <MenuItem value="normal">Media</MenuItem>
+                          <MenuItem value="low">Bassa</MenuItem>
+                        </Select>
+                      </FormControl>
+                    </TableCell>
+                    <TableCell align="right">
+                      <IconButton 
+                        size="small" 
+                        color="error" 
+                        onClick={() => handleRemovePOS(location.id)}
+                      >
+                        <DeleteIcon fontSize="small" />
+                      </IconButton>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </TableContainer>
+        )}
+      </Paper>
+
+      {/* Sezione 2: Ricerca dei POS */}
+      <Box sx={{ mb: 2 }}>
+        <form onSubmit={handleSearchSubmit}>
+          <Box sx={{ display: 'flex', gap: 1 }}>
+            <TextField
+              label="Cerca POS per nome, indirizzo, territorio, regione, ecc."
+              fullWidth
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              variant="outlined"
+              size="small"
+              InputProps={{
+                endAdornment: (
+                  <InputAdornment position="end">
+                    {isSearching ? (
+                      <CircularProgress size={20} />
+                    ) : (
+                      <IconButton 
+                        type="submit"
+                        edge="end"
+                      >
+                        <SearchIcon />
+                      </IconButton>
+                    )}
+                  </InputAdornment>
+                )
+              }}
+            />
+            
+            <Button 
+              variant="outlined" 
+              startIcon={<ClearIcon />}
+              onClick={clearSearch}
+              size="small"
+              disabled={isSearching}
+            >
+              Reset
+            </Button>
+          </Box>
+        </form>
+        
+        <Divider sx={{ my: 2 }} />
+      </Box>
+      
+      {/* Sezione 3: Tabella POS disponibili */}
+      <Box sx={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+        <TableContainer sx={{ flex: 1, overflow: 'auto' }}>
+          <Table stickyHeader size="small">
+            <TableHead>
+              <TableRow>
+                <TableCell width="80px" align="center">Aggiungi</TableCell>
+                <TableCell>Nome POS</TableCell>
+                <TableCell>Indirizzo</TableCell>
+                <TableCell>Territorio</TableCell>
+                <TableCell>Regione</TableCell>
+              </TableRow>
+            </TableHead>
+            <TableBody>
+              {isSearching ? (
+                <TableRow>
+                  <TableCell colSpan={5} align="center" sx={{ py: 3 }}>
+                    <CircularProgress size={30} />
+                    <Typography sx={{ ml: 2 }}>Ricerca in corso...</Typography>
+                  </TableCell>
+                </TableRow>
+              ) : displayedRows.length === 0 ? (
+                <TableRow>
+                  <TableCell colSpan={5} align="center" sx={{ py: 3 }}>
+                    {searchQuery.length > 0 
+                      ? 'Nessun risultato trovato. Prova con una ricerca diversa.' 
+                      : 'Nessun POS disponibile. Verifica la connessione al database.'}
+                  </TableCell>
+                </TableRow>
+              ) : (
+                displayedRows.map((pos) => {
+                  const isItemSelected = isSelected(pos);
+                  const locationId = `pos_${pos.id}`;
+                  
+                  return (
+                    <TableRow
+                      key={locationId}
+                      hover
+                      selected={isItemSelected}
+                      sx={{ 
+                        '&.Mui-selected': { 
+                          bgcolor: 'action.selected' 
+                        },
+                        '&:hover': { 
+                          bgcolor: 'action.hover' 
+                        }
+                      }}
+                    >
+                      <TableCell align="center">
+                        {isItemSelected ? (
+                          <IconButton 
+                            size="small" 
+                            color="error" 
+                            onClick={() => handleRemovePOS(locationId)}
+                          >
+                            <DeleteIcon fontSize="small" />
+                          </IconButton>
+                        ) : (
+                          <IconButton 
+                            size="small" 
+                            color="primary" 
+                            onClick={() => handleAddPOS(pos)}
+                          >
+                            <AddIcon fontSize="small" />
+                          </IconButton>
+                        )}
+                      </TableCell>
+                      <TableCell>
+                        <Typography variant="body2">{pos.nome_account}</Typography>
+                      </TableCell>
+                      <TableCell>
+                        <Box sx={{ display: 'flex', alignItems: 'flex-start' }}>
+                          <PlaceIcon fontSize="small" sx={{ mt: 0.2, mr: 0.5, color: 'text.secondary' }} />
+                          <Box>
+                            <Typography variant="body2">{pos.indirizzo_spedizioni || '-'}</Typography>
+                            <Typography variant="caption" color="text.secondary">
+                              {pos.citt_spedizioni} {pos.cap_spedizioni}
+                            </Typography>
+                          </Box>
+                        </Box>
+                      </TableCell>
+                      <TableCell>{pos.sf_territory || '-'}</TableCell>
+                      <TableCell>{pos.sf_region || '-'}</TableCell>
+                    </TableRow>
+                  );
+                })
+              )}
+            </TableBody>
+          </Table>
+        </TableContainer>
+        
+        {/* Footer con paginazione e selezioni */}
+        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mt: 1, px: 1 }}>
+          <Typography variant="caption" color="text.secondary">
+            {locations.length} POS selezionati su {Array.isArray(availablePOS) ? availablePOS.length : 0} trovati
+          </Typography>
+          
+          <TablePagination
+            rowsPerPageOptions={[10, 15, 25, 50]}
+            component="div"
+            count={Array.isArray(availablePOS) ? availablePOS.length : 0}
+            rowsPerPage={rowsPerPage}
+            page={page}
+            onPageChange={handleChangePage}
+            onRowsPerPageChange={handleChangeRowsPerPage}
+            labelRowsPerPage="Righe:"
+            labelDisplayedRows={({ from, to, count }) => `${from}-${to} di ${count}`}
+          />
+        </Box>
+      </Box>
+    </Box>
+  );
+};
+
+export default POSTableWithSelection;
+
+
+# ====== File: /var/www/html/insightg/wup/r_wup/src/components/modules/RouteOptimizer/components/POSTable.jsx ======
+import React, { useState, useEffect } from 'react';
+import {
+  Box,
+  TextField,
+  Paper,
+  InputAdornment,
+  IconButton,
+  TableContainer,
+  Table,
+  TableHead,
+  TableRow,
+  TableCell,
+  TableBody,
+  TablePagination,
+  Tooltip,
+  CircularProgress,
+  Typography,
+  Chip,
+  FormControl,
+  InputLabel,
+  Select,
+  MenuItem,
+  Button,
+  Grid,
+  Divider
+} from '@mui/material';
+import {
+  Add as AddIcon,
+  Search as SearchIcon,
+  FilterList as FilterIcon,
+  ClearAll as ClearIcon,
+  Place as PlaceIcon
+} from '@mui/icons-material';
+import { useRouteOptimizerStore } from '../stores/routeOptimizerStore';
+
+const POSTable = () => {
+  const { availablePOS, addLocation } = useRouteOptimizerStore();
+  
+  const [searchQuery, setSearchQuery] = useState('');
+  const [filteredPOS, setFilteredPOS] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [regionFilter, setRegionFilter] = useState('');
+  const [territoryFilter, setTerritoryFilter] = useState('');
+  const [segmentFilter, setSegmentFilter] = useState('');
+  const [showFilters, setShowFilters] = useState(false);
+  
+  // Paginazione della tabella POS
+  const [page, setPage] = useState(0);
+  const [rowsPerPage, setRowsPerPage] = useState(20);
+
+  // Compila le liste uniche di regioni, territori e segmenti
+  const getUniqueValues = (array, field) => {
+    if (!array || !Array.isArray(array)) return [];
+    const values = array.map(item => item[field]).filter(Boolean);
+    return [...new Set(values)].sort();
+  };
+
+  const regions = getUniqueValues(availablePOS, 'sf_region');
+  const territories = getUniqueValues(availablePOS, 'sf_territory');
+  const segments = getUniqueValues(availablePOS, 'rrp_segment');
+
+  // Filtra i POS in base alla ricerca e ai filtri selezionati
+  useEffect(() => {
+    if (!availablePOS || !Array.isArray(availablePOS)) return;
+    
+    let filtered = [...availablePOS];
+    
+    // Applica il filtro di ricerca testuale
+    if (searchQuery.length >= 2) {
+      const query = searchQuery.toLowerCase();
+      filtered = filtered.filter(pos => 
+        (pos.nome_account?.toLowerCase().includes(query)) || 
+        (pos.indirizzo_spedizioni?.toLowerCase().includes(query)) ||
+        (pos.citt_spedizioni?.toLowerCase().includes(query)) ||
+        (pos.sf_territory?.toLowerCase().includes(query))
+      );
+    }
+    
+    // Applica i filtri selezionati
+    if (regionFilter) {
+      filtered = filtered.filter(pos => pos.sf_region === regionFilter);
+    }
+    
+    if (territoryFilter) {
+      filtered = filtered.filter(pos => pos.sf_territory === territoryFilter);
+    }
+    
+    if (segmentFilter) {
+      filtered = filtered.filter(pos => pos.rrp_segment === segmentFilter);
+    }
+    
+    setFilteredPOS(filtered);
+    setPage(0); // Reset alla prima pagina dopo il filtro
+  }, [searchQuery, regionFilter, territoryFilter, segmentFilter, availablePOS]);
+
+  // Inizializza i dati filtrati all'avvio
+  useEffect(() => {
+    if (availablePOS && availablePOS.length > 0 && filteredPOS.length === 0) {
+      setFilteredPOS(availablePOS);
+    }
+  }, [availablePOS]);
+
+  // Aggiungi punto
+  const handleAddLocation = async (pos) => {
+    setLoading(true);
+    try {
+      const locationData = {
+        id: `pos_${pos.id}`,
+        name: pos.nome_account,
+        address: getFullAddress(pos),
+        sf_territory: pos.sf_territory || "-",
+        sf_region: pos.sf_region || "-",
+        duration: 30, // Default duration
+        priority: 'normal', // Default priority
+        notes: '',
+        lat: pos.lat,
+        lng: pos.lng
+      };
+      
+      addLocation(locationData);
+      showNotification(`"${pos.nome_account}" aggiunto ai POS selezionati`);
+    } catch (error) {
+      console.error("Error adding location:", error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const showNotification = (message) => {
+    // Implementata tramite props o context
+    console.log(message);
+  };
+
+  const getFullAddress = (pos) => {
+    const parts = [];
+    if (pos.indirizzo_spedizioni) parts.push(pos.indirizzo_spedizioni);
+    if (pos.citt_spedizioni) parts.push(pos.citt_spedizioni);
+    if (pos.cap_spedizioni) parts.push(pos.cap_spedizioni);
+    return parts.join(', ') || "Indirizzo non disponibile";
+  };
+
+  const clearFilters = () => {
+    setSearchQuery('');
+    setRegionFilter('');
+    setTerritoryFilter('');
+    setSegmentFilter('');
+    setShowFilters(false);
+  };
+
+  // Gestione paginazione
+  const handleChangePage = (event, newPage) => {
+    setPage(newPage);
+  };
+
+  const handleChangeRowsPerPage = (event) => {
+    setRowsPerPage(parseInt(event.target.value, 10));
+    setPage(0);
+  };
+
+  // Calcola righe da visualizzare
+  const displayedRows = filteredPOS.slice(
+    page * rowsPerPage,
+    page * rowsPerPage + rowsPerPage
+  );
+
+  return (
+    <Box sx={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+      {/* Header con ricerca e filtri */}
+      <Box sx={{ mb: 2 }}>
+        <Box sx={{ display: 'flex', gap: 1, mb: 2 }}>
+          <TextField
+            label="Cerca POS per nome, indirizzo o territorio"
+            fullWidth
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            variant="outlined"
+            size="small"
+            InputProps={{
+              endAdornment: (
+                <InputAdornment position="end">
+                  <SearchIcon />
+                </InputAdornment>
+              )
+            }}
+          />
+          
+          <Button 
+            variant="outlined" 
+            startIcon={showFilters ? <ClearIcon /> : <FilterIcon />}
+            onClick={() => setShowFilters(!showFilters)}
+            size="small"
+          >
+            {showFilters ? 'Nascondi Filtri' : 'Filtri'}
+          </Button>
+        </Box>
+        
+        {showFilters && (
+          <Box sx={{ mb: 1 }}>
+            <Grid container spacing={2}>
+              <Grid item xs={12} md={4}>
+                <FormControl fullWidth size="small">
+                  <InputLabel>Regione</InputLabel>
+                  <Select
+                    value={regionFilter}
+                    onChange={(e) => setRegionFilter(e.target.value)}
+                    label="Regione"
+                  >
+                    <MenuItem value="">Tutte le regioni</MenuItem>
+                    {regions.map(region => (
+                      <MenuItem key={region} value={region}>{region}</MenuItem>
+                    ))}
+                  </Select>
+                </FormControl>
+              </Grid>
+              
+              <Grid item xs={12} md={4}>
+                <FormControl fullWidth size="small">
+                  <InputLabel>Territorio</InputLabel>
+                  <Select
+                    value={territoryFilter}
+                    onChange={(e) => setTerritoryFilter(e.target.value)}
+                    label="Territorio"
+                  >
+                    <MenuItem value="">Tutti i territori</MenuItem>
+                    {territories.map(territory => (
+                      <MenuItem key={territory} value={territory}>{territory}</MenuItem>
+                    ))}
+                  </Select>
+                </FormControl>
+              </Grid>
+              
+              <Grid item xs={12} md={4}>
+                <FormControl fullWidth size="small">
+                  <InputLabel>Segmento</InputLabel>
+                  <Select
+                    value={segmentFilter}
+                    onChange={(e) => setSegmentFilter(e.target.value)}
+                    label="Segmento"
+                  >
+                    <MenuItem value="">Tutti i segmenti</MenuItem>
+                    {segments.map(segment => (
+                      <MenuItem key={segment} value={segment}>{segment}</MenuItem>
+                    ))}
+                  </Select>
+                </FormControl>
+              </Grid>
+            </Grid>
+            
+            <Box sx={{ display: 'flex', justifyContent: 'flex-end', mt: 1 }}>
+              <Button 
+                size="small" 
+                onClick={clearFilters}
+                startIcon={<ClearIcon />}
+              >
+                Cancella filtri
+              </Button>
+            </Box>
+          </Box>
+        )}
+        
+        <Divider />
+      </Box>
+      
+      {/* Tabella POS */}
+      <Box sx={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+        <TableContainer sx={{ flex: 1, overflow: 'auto' }}>
+          <Table stickyHeader size="small">
+            <TableHead>
+              <TableRow>
+                <TableCell padding="checkbox" width="50px" align="center">Aggiungi</TableCell>
+                <TableCell>Nome POS</TableCell>
+                <TableCell>Indirizzo</TableCell>
+                <TableCell>Territorio</TableCell>
+                <TableCell width="120px">Regione</TableCell>
+                <TableCell width="120px">Segmento</TableCell>
+              </TableRow>
+            </TableHead>
+            <TableBody>
+              {loading && (
+                <TableRow>
+                  <TableCell colSpan={6} align="center" sx={{ py: 3 }}>
+                    <CircularProgress size={30} />
+                  </TableCell>
+                </TableRow>
+              )}
+              
+              {!loading && displayedRows.length === 0 && (
+                <TableRow>
+                  <TableCell colSpan={6} align="center" sx={{ py: 3 }}>
+                    {availablePOS?.length > 0 
+                      ? 'Nessun POS trovato con i filtri impostati' 
+                      : 'Caricamento POS in corso...'}
+                  </TableCell>
+                </TableRow>
+              )}
+              
+              {!loading && displayedRows.map((pos) => (
+                <TableRow
+                  key={pos.id}
+                  hover
+                  sx={{ '&:hover': { bgcolor: 'action.hover' } }}
+                >
+                  <TableCell padding="checkbox" align="center">
+                    <Tooltip title="Aggiungi ai POS selezionati">
+                      <IconButton 
+                        size="small" 
+                        color="primary"
+                        onClick={() => handleAddLocation(pos)}
+                      >
+                        <AddIcon fontSize="small" />
+                      </IconButton>
+                    </Tooltip>
+                  </TableCell>
+                  <TableCell>
+                    <Typography variant="body2">{pos.nome_account}</Typography>
+                  </TableCell>
+                  <TableCell>
+                    <Box sx={{ display: 'flex', alignItems: 'flex-start' }}>
+                      <PlaceIcon fontSize="small" sx={{ mt: 0.2, mr: 0.5, color: 'text.secondary' }} />
+                      <Box>
+                        <Typography variant="body2">{pos.indirizzo_spedizioni || '-'}</Typography>
+                        <Typography variant="caption" color="text.secondary">
+                          {pos.citt_spedizioni} {pos.cap_spedizioni}
+                        </Typography>
+                      </Box>
+                    </Box>
+                  </TableCell>
+                  <TableCell>{pos.sf_territory || '-'}</TableCell>
+                  <TableCell>
+                    {pos.sf_region && (
+                      <Chip 
+                        size="small" 
+                        label={pos.sf_region} 
+                        color="primary" 
+                        variant="outlined"
+                        sx={{ fontSize: '0.7rem' }}
+                      />
+                    )}
+                  </TableCell>
+                  <TableCell>
+                    {pos.rrp_segment && (
+                      <Chip 
+                        size="small" 
+                        label={pos.rrp_segment} 
+                        color="secondary" 
+                        variant="outlined"
+                        sx={{ fontSize: '0.7rem' }}
+                      />
+                    )}
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </TableContainer>
+        
+        {/* Footer con paginazione */}
+        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mt: 1, px: 1 }}>
+          <Typography variant="caption" color="text.secondary">
+            {filteredPOS.length} POS filtrati su {availablePOS?.length || 0} totali
+          </Typography>
+          
+          <TablePagination
+            rowsPerPageOptions={[10, 20, 50, 100]}
+            component="div"
+            count={filteredPOS.length}
+            rowsPerPage={rowsPerPage}
+            page={page}
+            onPageChange={handleChangePage}
+            onRowsPerPageChange={handleChangeRowsPerPage}
+            labelRowsPerPage="Righe:"
+            labelDisplayedRows={({ from, to, count }) => `${from}-${to} di ${count}`}
+          />
+        </Box>
+      </Box>
+    </Box>
+  );
+};
+
+export default POSTable;
+
+
+# ====== File: /var/www/html/insightg/wup/r_wup/src/components/modules/RouteOptimizer/components/TimelineView.jsx ======
+import React from 'react';
+import {
+  Box,
+  Typography,
+  Chip,
+  useTheme,
+  Divider,
+  Paper
+} from '@mui/material';
+import {
+  AccessTime as TimeIcon,
+  DirectionsCar as CarIcon,
+  Place as PlaceIcon,
+  Home as HomeIcon,
+  LocalCafe as CoffeeIcon,
+  ArrowBack as ReturnIcon,
+  ArrowForward as ForwardIcon,
+  CalendarToday as CalendarIcon
+} from '@mui/icons-material';
+
+const TimelineView = ({ route, selectedDay, singleDayMode = false, showDayConnections = false }) => {
+  const theme = useTheme();
+  
+  if (!route || !route.days || route.days.length === 0) {
+    return (
+      <Box sx={{ p: 3, textAlign: 'center' }}>
+        <Typography color="text.secondary">
+          Nessun piano temporale disponibile.
+        </Typography>
+      </Box>
+    );
+  }
+  
+  // Determina quali giorni mostrare
+  const daysToShow = selectedDay === 0 || !singleDayMode
+    ? route.days  // Mostra tutti i giorni
+    : [route.days[selectedDay - 1]];  // Mostra solo il giorno selezionato
+  
+  // Colori per i diversi giorni
+  const dayColors = [
+    "#1976d2", // Blu
+    "#2e7d32", // Verde
+    "#c62828", // Rosso
+    "#7b1fa2", // Viola
+    "#f57c00", // Arancione
+    "#0097a7", // Ciano
+    "#d81b60", // Rosa
+    "#00695c", // Verde acqua
+    "#e65100", // Arancione scuro
+    "#283593", // Blu scuro
+    "#4a148c", // Viola scuro
+    "#827717"  // Olivastro
+  ];
+  
+  // Formatta orario nel formato HH:MM
+  const formatTime = (dateTimeString) => {
+    return new Date(dateTimeString).toLocaleTimeString([], { 
+      hour: '2-digit', 
+      minute: '2-digit' 
+    });
+  };
+  
+  // Formatta la data nel formato GG/MM/AAAA
+  const formatDate = (dateString) => {
+    return new Date(dateString).toLocaleDateString([], {
+      day: '2-digit',
+      month: '2-digit',
+      year: 'numeric'
+    });
+  };
+  
+  // Formatta la durata in minuti o ore
+  const formatDuration = (seconds) => {
+    if (!seconds) return "N/D";
+    
+    const minutes = Math.floor(seconds / 60);
+    
+    if (minutes < 60) {
+      return `${minutes} min`;
+    }
+    
+    const hours = Math.floor(minutes / 60);
+    const remainingMinutes = minutes % 60;
+    
+    return remainingMinutes > 0 
+      ? `${hours} h ${remainingMinutes} min`
+      : `${hours} h`;
+  };
+  
+  // Formatta la distanza in km
+  const formatDistance = (meters) => {
+    if (!meters) return "N/D";
+    return `${(meters / 1000).toFixed(1)} km`;
+  };
+  
+  // Determina l'icona corretta per la visita
+  const getVisitIcon = (visit, color = 'primary.main') => {
+    // Pausa pranzo
+    if (visit.location.is_lunch_break) {
+      return <CoffeeIcon sx={{ color: 'warning.main' }} />;
+    }
+    
+    // Punto di partenza
+    if (visit.location.is_start_point) {
+      return <HomeIcon sx={{ color: color }} />;
+    }
+    
+    // Visita di ritorno
+    if (visit.travelInfo && visit.travelInfo.isReturn) {
+      return <ReturnIcon sx={{ color: color }} />;
+    }
+    
+    // Visita normale
+    return <PlaceIcon sx={{ color: color }} />;
+  };
+  
+  // Calcola distanza e tempo di viaggio tra due giorni
+  const calculateDayConnection = (day1, day2) => {
+    if (!day1 || !day2 || 
+        !day1.visits || !day2.visits || 
+        day1.visits.length === 0 || day2.visits.length === 0) {
+      return null;
+    }
+    
+    // Trova l'ultima visita del giorno 1 (escludendo la pausa pranzo)
+    let lastVisit = null;
+    for (let i = day1.visits.length - 1; i >= 0; i--) {
+      if (!day1.visits[i].location.is_lunch_break) {
+        lastVisit = day1.visits[i];
+        break;
+      }
+    }
+    
+    // Trova la prima visita del giorno 2 (escludendo la pausa pranzo)
+    let firstVisit = null;
+    for (let i = 0; i < day2.visits.length; i++) {
+      if (!day2.visits[i].location.is_lunch_break) {
+        firstVisit = day2.visits[i];
+        break;
+      }
+    }
+    
+    if (!lastVisit || !firstVisit) {
+      return null;
+    }
+    
+    // Calcolo della distanza approssimativa (formula di Haversine)
+    const R = 6371; // raggio terrestre in km
+    const lat1 = parseFloat(lastVisit.location.lat);
+    const lon1 = parseFloat(lastVisit.location.lng);
+    const lat2 = parseFloat(firstVisit.location.lat);
+    const lon2 = parseFloat(firstVisit.location.lng);
+    
+    if (isNaN(lat1) || isNaN(lon1) || isNaN(lat2) || isNaN(lon2)) {
+      return null;
+    }
+    
+    const dLat = (lat2 - lat1) * Math.PI / 180;
+    const dLon = (lon2 - lon1) * Math.PI / 180;
+    const a = 
+      Math.sin(dLat/2) * Math.sin(dLat/2) +
+      Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * 
+      Math.sin(dLon/2) * Math.sin(dLon/2);
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+    const distance = R * c; // Distanza in km
+    
+    // Tempo di viaggio stimato (50 km/h -> 0.8 km/min)
+    const estimatedTime = distance / 0.8; // minuti
+    
+    return {
+      from: lastVisit,
+      to: firstVisit,
+      distance: distance * 1000, // converti in metri per compatibilità
+      duration: estimatedTime * 60, // converti in secondi per compatibilità
+      isSameLocation: distance < 0.1 // se la distanza è < 100m considera lo stesso punto
+    };
+  };
+  
+  return (
+    <Box sx={{ mb: 3 }}>
+      {daysToShow.map((day, dayIndex) => {
+        const actualDayIndex = singleDayMode ? 0 : dayIndex;
+        const dayColorIndex = actualDayIndex % dayColors.length;
+        const dayColor = dayColors[dayColorIndex];
+        
+        return (
+          <Box key={dayIndex} sx={{ mb: 5 }}>
+            {/* Intestazione del giorno */}
+            <Box sx={{ 
+              bgcolor: dayColor, 
+              color: 'white', 
+              p: 2, 
+              borderRadius: 1, 
+              mb: 2,
+              display: 'flex',
+              alignItems: 'center',
+              gap: 1
+            }}>
+              <CalendarIcon />
+              <Typography variant="h6">
+                Giorno {singleDayMode ? selectedDay : actualDayIndex + 1} - {formatDate(day.date)}
+              </Typography>
+            </Box>
+            
+            <Box sx={{ p: 1 }}>
+              {day.visits.length === 0 ? (
+                <Typography color="text.secondary" align="center">
+                  Nessuna visita pianificata per questo giorno.
+                </Typography>
+              ) : (
+                <Box sx={{ position: 'relative' }}>
+                  {/* Linea temporale verticale */}
+                  <Box 
+                    sx={{ 
+                      position: 'absolute', 
+                      left: '110px', 
+                      top: 0, 
+                      bottom: 0, 
+                      width: '3px', 
+                      bgcolor: dayColor,
+                      opacity: 0.6,
+                      zIndex: 0
+                    }}
+                  />
+                  
+                  {day.visits.map((visit, visitIndex) => (
+                    <Box key={visitIndex}>
+                      {/* Visualizzazione del viaggio se non è la prima visita */}
+                      {visit.travelInfo && visit.travelInfo.fromPrevious && (
+                        <Box 
+                          sx={{ 
+                            display: 'flex', 
+                            py: 1,
+                            position: 'relative',
+                            zIndex: 1
+                          }}
+                        >
+                          <Box sx={{ width: '100px', textAlign: 'right', pr: 2 }}>
+                            <Typography variant="body2" color="text.secondary">
+                              Viaggio
+                            </Typography>
+                          </Box>
+                          
+                          <Box 
+                            sx={{ 
+                              display: 'flex', 
+                              alignItems: 'center', 
+                              bgcolor: 'background.paper',
+                              borderRadius: 1,
+                              p: 1,
+                              border: '1px dashed',
+                              borderColor: visit.travelInfo.isReturn ? dayColor : 'divider'
+                            }}
+                          >
+                            <CarIcon sx={{ color: dayColor, mr: 1 }} />
+                            <Typography variant="body2">
+                              {formatDuration(visit.travelInfo.duration)} - {formatDistance(visit.travelInfo.distance)}
+                              {visit.travelInfo.isReturn && (
+                                <Typography 
+                                  component="span" 
+                                  variant="body2" 
+                                  color="primary" 
+                                  sx={{ ml: 1, fontWeight: 'bold' }}
+                                >
+                                  (Ritorno)
+                                </Typography>
+                              )}
+                            </Typography>
+                          </Box>
+                        </Box>
+                      )}
+                      
+                      {/* Visualizzazione della visita */}
+                      <Box 
+                        sx={{ 
+                          display: 'flex', 
+                          py: 1,
+                          position: 'relative',
+                          zIndex: 1
+                        }}
+                      >
+                        <Box sx={{ width: '100px', textAlign: 'right', pr: 2 }}>
+                          <Typography variant="body2" fontWeight="bold">
+                            {formatTime(visit.arrivalTime)}
+                          </Typography>
+                        </Box>
+                        
+                        <Box 
+                          sx={{ 
+                            position: 'relative',
+                            zIndex: 2,
+                            display: 'flex', 
+                            flexDirection: 'column',
+                            bgcolor: 'background.paper', 
+                            p: 1.5,
+                            border: '1px solid',
+                            borderColor: visit.location.is_lunch_break 
+                              ? 'warning.main'
+                              : visit.location.is_start_point || visit.travelInfo?.isReturn 
+                                ? dayColor 
+                                : visit.location.priority === 'high' 
+                                  ? 'error.main'
+                                  : dayColor,
+                            borderRadius: 1,
+                            width: 'calc(100% - 120px)',
+                            boxShadow: 1
+                          }}
+                        >
+                          <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 1 }}>
+                            <Box sx={{ display: 'flex', alignItems: 'center' }}>
+                              {getVisitIcon(visit, dayColor)}
+                              <Typography variant="subtitle1" sx={{ ml: 1 }}>
+                                {visit.location.name}
+                                {visit.location.is_start_point && (
+                                  <Typography 
+                                    component="span" 
+                                    variant="body2" 
+                                    sx={{ ml: 1, fontWeight: 'bold', color: dayColor }}
+                                  >
+                                    (Partenza)
+                                  </Typography>
+                                )}
+                                {visit.travelInfo?.isReturn && (
+                                  <Typography 
+                                    component="span" 
+                                    variant="body2" 
+                                    sx={{ ml: 1, fontWeight: 'bold', color: dayColor }}
+                                  >
+                                    (Arrivo)
+                                  </Typography>
+                                )}
+                                {visit.visitPart === 'before_lunch' && (
+                                  <Typography 
+                                    component="span" 
+                                    variant="body2" 
+                                    color="text.secondary" 
+                                    sx={{ ml: 1 }}
+                                  >
+                                    (Prima parte)
+                                  </Typography>
+                                )}
+                                {visit.visitPart === 'after_lunch' && (
+                                  <Typography 
+                                    component="span" 
+                                    variant="body2" 
+                                    color="text.secondary" 
+                                    sx={{ ml: 1 }}
+                                  >
+                                    (Continuazione)
+                                  </Typography>
+                                )}
+                              </Typography>
+                            </Box>
+                            
+                            {/* Mostra la durata anche per il punto di partenza se è un POS */}
+                            {visit.location.is_start_point && visit.location.visit_duration && (
+                              <Chip 
+                                size="small" 
+                                label={`${visit.location.visit_duration} min`} 
+                                icon={<TimeIcon />} 
+                                color="primary" 
+                                variant="outlined" 
+                              />
+                            )}
+                            
+                            {/* Mostra la durata per le visite normali */}
+                            {!visit.location.is_start_point && !visit.travelInfo?.isReturn && !visit.location.is_lunch_break && !visit.visitPart && (
+                              <Chip 
+                                size="small" 
+                                label={`${visit.location.duration} min`} 
+                                icon={<TimeIcon />} 
+                                color="primary" 
+                                variant="outlined" 
+                              />
+                            )}
+                            
+                            {/* Mostra la durata parziale per le visite divise */}
+                            {(visit.visitPart === 'before_lunch' || visit.visitPart === 'after_lunch') && visit.location.partial_duration && (
+                              <Chip 
+                                size="small" 
+                                label={`${Math.round(visit.location.partial_duration)} min`} 
+                                icon={<TimeIcon />} 
+                                color="info" 
+                                variant="outlined" 
+                              />
+                            )}
+                            
+                            {/* Chip specifico per la pausa pranzo */}
+                            {visit.location.is_lunch_break && (
+                              <Chip 
+                                size="small" 
+                                label={`${visit.location.duration} min`} 
+                                icon={<CoffeeIcon />} 
+                                color="warning" 
+                                variant="outlined" 
+                              />
+                            )}
+                          </Box>
+                          
+                          {/* Mostra dettagli per pausa pranzo */}
+                          {visit.location.is_lunch_break && (
+                            <Typography variant="body2" color="text.secondary">
+                              {visit.location.start_time} - {visit.location.end_time}
+                            </Typography>
+                          )}
+                          
+                          {/* Mostra indirizzo per tutti tranne pausa pranzo */}
+                          {!visit.location.is_lunch_break && (
+                            <Typography variant="body2" color="text.secondary">
+                              {visit.location.address}
+                            </Typography>
+                          )}
+                          
+                          {/* Mostra note se presenti */}
+                          {visit.location.notes && !visit.location.is_lunch_break && (
+                            <Typography variant="body2" sx={{ mt: 1, fontStyle: 'italic' }}>
+                              Note: {visit.location.notes}
+                            </Typography>
+                          )}
+                          
+                          {/* Mostra priorità se presente e non è punto di partenza/arrivo o pausa pranzo */}
+                          {visit.location.priority && !visit.location.is_start_point && !visit.travelInfo?.isReturn && !visit.location.is_lunch_break && (
+                            <Box sx={{ mt: 1 }}>
+                              <Chip 
+                                size="small" 
+                                label={
+                                  visit.location.priority === 'high' ? 'Alta priorità' :
+                                  visit.location.priority === 'low' ? 'Bassa priorità' :
+                                  'Priorità normale'
+                                } 
+                                color={
+                                  visit.location.priority === 'high' ? 'error' :
+                                  visit.location.priority === 'low' ? 'default' :
+                                  'primary'
+                                } 
+                                variant="outlined" 
+                              />
+                            </Box>
+                          )}
+                        </Box>
+                      </Box>
+                      
+                      {/* Visualizzazione dell'orario di partenza per tutte le visite tranne la pausa pranzo e il punto di ritorno */}
+                      {!visit.location.is_lunch_break && !visit.travelInfo?.isReturn && (
+                        <Box 
+                          sx={{ 
+                            display: 'flex', 
+                            py: 1,
+                            position: 'relative',
+                            zIndex: 1
+                          }}
+                        >
+                          <Box sx={{ width: '100px', textAlign: 'right', pr: 2 }}>
+                            <Typography variant="body2" color="text.secondary">
+                              {formatTime(visit.departureTime)}
+                            </Typography>
+                          </Box>
+                          
+                          <Box sx={{ display: 'flex', alignItems: 'center' }}>
+                            <Typography variant="body2" color="text.secondary">
+                              Partenza
+                            </Typography>
+                          </Box>
+                        </Box>
+                      )}
+                    </Box>
+                  ))}
+                </Box>
+              )}
+            </Box>
+            
+            {/* Connessione al giorno successivo */}
+            {showDayConnections && dayIndex < daysToShow.length - 1 && (
+              <Box sx={{ mt: 3, mb: 4 }}>
+                <Paper 
+                  variant="outlined" 
+                  sx={{ 
+                    p: 2, 
+                    borderStyle: 'dashed', 
+                    borderColor: 'grey.400',
+                    bgcolor: 'grey.50'
+                  }}
+                >
+                  <Box sx={{ display: 'flex', alignItems: 'center', mb: 1 }}>
+                    <ForwardIcon sx={{ mr: 1, color: 'grey.600' }} />
+                    <Typography variant="subtitle1" sx={{ fontWeight: 'medium' }}>
+                      Connessione al Giorno {actualDayIndex + 2}
+                    </Typography>
+                  </Box>
+                  
+                  <Divider sx={{ mb: 2 }} />
+                  
+                  {(() => {
+                    const connection = calculateDayConnection(day, daysToShow[dayIndex + 1]);
+                    
+                    if (!connection) {
+                      return (
+                        <Typography color="text.secondary">
+                          Informazioni di connessione non disponibili.
+                        </Typography>
+                      );
+                    }
+                    
+                    const nextDayColorIndex = (dayColorIndex + 1) % dayColors.length;
+                    const nextDayColor = dayColors[nextDayColorIndex];
+                    
+                    return (
+                      <Box>
+                        <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 2, mb: 2 }}>
+                          <Box sx={{ 
+                            display: 'flex', 
+                            alignItems: 'center', 
+                            p: 1, 
+                            border: `1px solid ${dayColor}`,
+                            borderRadius: 1,
+                            minWidth: 240
+                          }}>
+                            <Box sx={{ 
+                              width: 16, 
+                              height: 16, 
+                              borderRadius: '50%', 
+                              bgcolor: dayColor,
+                              mr: 1
+                            }} />
+                            <Typography variant="body2">
+                              <strong>Da:</strong> {connection.from.location.name}
+                            </Typography>
+                          </Box>
+                          
+                          <Box sx={{ 
+                            display: 'flex', 
+                            alignItems: 'center', 
+                            p: 1, 
+                            border: `1px solid ${nextDayColor}`,
+                            borderRadius: 1,
+                            minWidth: 240
+                          }}>
+                            <Box sx={{ 
+                              width: 16, 
+                              height: 16, 
+                              borderRadius: '50%', 
+                              bgcolor: nextDayColor,
+                              mr: 1
+                            }} />
+                            <Typography variant="body2">
+                              <strong>A:</strong> {connection.to.location.name}
+                            </Typography>
+                          </Box>
+                        </Box>
+                        
+                        <Box sx={{ display: 'flex', gap: 2 }}>
+                          {connection.isSameLocation ? (
+                            <Chip 
+                              icon={<HomeIcon />} 
+                              label="Stessa Posizione"
+                              color="success"
+                              variant="outlined"
+                            />
+                          ) : (
+                            <>
+                              <Chip 
+                                icon={<TimeIcon />} 
+                                label={`Tempo stimato: ${formatDuration(connection.duration)}`}
+                                color="default"
+                                variant="outlined"
+                              />
+                              <Chip 
+                                icon={<CarIcon />} 
+                                label={`Distanza: ${formatDistance(connection.distance)}`}
+                                color="default"
+                                variant="outlined"
+                              />
+                            </>
+                          )}
+                        </Box>
+                      </Box>
+                    );
+                  })()}
+                </Paper>
+              </Box>
+            )}
+          </Box>
+        );
+      })}
+    </Box>
+  );
+};
+
+export default TimelineView;
+
+
+# ====== File: /var/www/html/insightg/wup/r_wup/src/components/modules/RouteOptimizer/components/SavePlanDialog.jsx ======
+// src/components/modules/RouteOptimizer/components/SavePlanDialog.jsx
+
+import React, { useState } from 'react';
+import {
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogActions,
+  Button,
+  TextField,
+  Box,
+  Typography,
+  CircularProgress
+} from '@mui/material';
+import { useRouteOptimizerStore } from '../stores/routeOptimizerStore';
+
+const SavePlanDialog = ({ open, onClose, onSave }) => {
+  const [name, setName] = useState('');
+  const [description, setDescription] = useState('');
+  const [error, setError] = useState('');
+  const [loading, setLoading] = useState(false);
+  
+  const { savePlanToServer } = useRouteOptimizerStore();
+  
+  const handleSave = async () => {
+    if (!name.trim()) {
+      setError('Il nome del piano è obbligatorio');
+      return;
+    }
+    
+    setLoading(true);
+    
+    try {
+      await savePlanToServer(name, description);
+      onSave(name);
+      handleClose();
+    } catch (err) {
+      setError(err.message || 'Errore nel salvataggio del piano');
+    } finally {
+      setLoading(false);
+    }
+  };
+  
+  const handleClose = () => {
+    setName('');
+    setDescription('');
+    setError('');
+    onClose();
+  };
+  
+  return (
+    <Dialog open={open} onClose={handleClose} maxWidth="sm" fullWidth>
+      <DialogTitle>Salva Piano di Visite</DialogTitle>
+      
+      <DialogContent>
+        <Box sx={{ mt: 1 }}>
+          <TextField
+            label="Nome del Piano"
+            fullWidth
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            margin="normal"
+            required
+            error={!!error}
+            helperText={error}
+            disabled={loading}
+          />
+          
+          <TextField
+            label="Descrizione (opzionale)"
+            fullWidth
+            value={description}
+            onChange={(e) => setDescription(e.target.value)}
+            margin="normal"
+            multiline
+            rows={3}
+            disabled={loading}
+          />
+          
+          <Typography variant="body2" color="text.secondary" sx={{ mt: 2 }}>
+            Salvando questo piano, potrai ricaricarlo in futuro per modificarlo o riutilizzarlo.
+          </Typography>
+        </Box>
+      </DialogContent>
+      
+      <DialogActions>
+        <Button onClick={handleClose} disabled={loading}>
+          Annulla
+        </Button>
+        <Button 
+          onClick={handleSave} 
+          variant="contained" 
+          disabled={loading}
+          startIcon={loading ? <CircularProgress size={20} /> : null}
+        >
+          {loading ? 'Salvataggio...' : 'Salva'}
+        </Button>
+      </DialogActions>
+    </Dialog>
+  );
+};
+
+export default SavePlanDialog;  // Assicurati che questa riga sia presente e corretta
+
+
+# ====== File: /var/www/html/insightg/wup/r_wup/src/components/modules/RouteOptimizer/components/LoadPlanDialog.jsx ======
+import React, { useState } from 'react';
+import {
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogActions,
+  Button,
+  Box,
+  Typography,
+  List,
+  ListItem,
+  ListItemText,
+  ListItemSecondaryAction,
+  IconButton,
+  Divider,
+  CircularProgress,
+  TextField,
+  InputAdornment
+} from '@mui/material';
+import {
+  Delete as DeleteIcon,
+  Search as SearchIcon,
+  Today as DateIcon
+} from '@mui/icons-material';
+import { useRouteOptimizerStore } from '../stores/routeOptimizerStore';
+import { deletePlan } from '../api/routeOptimizerApi';
+
+const LoadPlanDialog = ({ open, onClose, plans = [], onLoad }) => {
+  const [selectedPlanId, setSelectedPlanId] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+  const [searchTerm, setSearchTerm] = useState('');
+  const [deleteConfirmId, setDeleteConfirmId] = useState(null);
+  
+  const { loadPlanFromServer, fetchSavedPlans } = useRouteOptimizerStore();
+  
+  const handleLoadPlan = async () => {
+    if (!selectedPlanId) {
+      setError('Seleziona un piano da caricare');
+      return;
+    }
+    
+    setLoading(true);
+    
+    try {
+      const loadedPlan = await loadPlanFromServer(selectedPlanId);
+      onLoad(loadedPlan);
+      handleClose();
+    } catch (err) {
+      setError(err.message || 'Errore nel caricamento del piano');
+    } finally {
+      setLoading(false);
+    }
+  };
+  
+  const handleDeletePlan = async (planId) => {
+    if (deleteConfirmId === planId) {
+      try {
+        await deletePlan(planId);
+        await fetchSavedPlans();
+        setDeleteConfirmId(null);
+      } catch (err) {
+        setError(err.message || 'Errore nell\'eliminazione del piano');
+      }
+    } else {
+      setDeleteConfirmId(planId);
+      // Reset del timer di conferma dopo 3 secondi
+      setTimeout(() => {
+        setDeleteConfirmId(null);
+      }, 3000);
+    }
+  };
+  
+  const handleClose = () => {
+    setSelectedPlanId(null);
+    setSearchTerm('');
+    setError('');
+    onClose();
+  };
+  
+  // Filtra i piani in base al termine di ricerca
+  const filteredPlans = plans.filter(plan =>
+    plan.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+    (plan.description && plan.description.toLowerCase().includes(searchTerm.toLowerCase()))
+  );
+
+  return (
+    <Dialog open={open} onClose={handleClose} maxWidth="md" fullWidth>
+      <DialogTitle>Carica Piano di Visite</DialogTitle>
+      
+      <DialogContent>
+        <Box sx={{ mt: 1 }}>
+          <TextField
+            fullWidth
+            placeholder="Cerca piano..."
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            InputProps={{
+              startAdornment: (
+                <InputAdornment position="start">
+                  <SearchIcon />
+                </InputAdornment>
+              ),
+            }}
+            margin="normal"
+          />
+          
+          {loading ? (
+            <Box sx={{ display: 'flex', justifyContent: 'center', p: 4 }}>
+              <CircularProgress />
+            </Box>
+          ) : plans.length === 0 ? (
+            <Typography color="text.secondary" align="center" sx={{ py: 4 }}>
+              Nessun piano salvato. Crea e salva un nuovo piano per vederlo qui.
+            </Typography>
+          ) : filteredPlans.length === 0 ? (
+            <Typography color="text.secondary" align="center" sx={{ py: 4 }}>
+              Nessun piano corrisponde alla ricerca.
+            </Typography>
+          ) : (
+            <List sx={{ maxHeight: '300px', overflow: 'auto' }}>
+              {filteredPlans.map((plan) => (
+                <React.Fragment key={plan.id}>
+                  <ListItem
+                    button
+                    selected={selectedPlanId === plan.id}
+                    onClick={() => setSelectedPlanId(plan.id)}
+                    sx={{ 
+                      borderLeft: selectedPlanId === plan.id ? 
+                        '3px solid' : '3px solid transparent', 
+                      borderLeftColor: 'primary.main' 
+                    }}
+                  >
+                    <ListItemText
+                      primary={plan.name}
+                      secondary={
+                        <React.Fragment>
+                          <Box sx={{ display: 'flex', alignItems: 'center', mt: 0.5 }}>
+                            <DateIcon fontSize="small" sx={{ mr: 0.5, fontSize: 16 }} />
+                            <Typography variant="caption" component="span">
+                              Creato il {new Date(plan.created_at).toLocaleDateString()}
+                            </Typography>
+                          </Box>
+                          {plan.description && (
+                            <Typography
+                              variant="body2"
+                              color="text.secondary"
+                              sx={{ mt: 0.5 }}
+                              noWrap
+                            >
+                              {plan.description}
+                            </Typography>
+                          )}
+                        </React.Fragment>
+                      }
+                    />
+                    <ListItemSecondaryAction>
+                      <IconButton 
+                        edge="end" 
+                        color={deleteConfirmId === plan.id ? 'error' : 'default'} 
+                        onClick={() => handleDeletePlan(plan.id)}
+                      >
+                        <DeleteIcon />
+                      </IconButton>
+                    </ListItemSecondaryAction>
+                  </ListItem>
+                  <Divider component="li" />
+                </React.Fragment>
+              ))}
+            </List>
+          )}
+          
+          {error && (
+            <Typography color="error" sx={{ mt: 2 }}>
+              {error}
+            </Typography>
+          )}
+        </Box>
+      </DialogContent>
+      
+      <DialogActions>
+        <Button onClick={handleClose}>
+          Annulla
+        </Button>
+        <Button 
+          onClick={handleLoadPlan}
+          variant="contained"
+          disabled={!selectedPlanId || loading}
+        >
+          Carica
+        </Button>
+      </DialogActions>
+    </Dialog>
+  );
+};
+
+export default LoadPlanDialog;
+
+
+# ====== File: /var/www/html/insightg/wup/r_wup/src/components/modules/RouteOptimizer/components/SelectedLocationsTable.jsx ======
+import React, { useState } from 'react';
+import {
+  Box,
+  Typography,
+  IconButton,
+  TableContainer,
+  Table,
+  TableHead,
+  TableRow,
+  TableCell,
+  TableBody,
+  Chip,
+  Tooltip,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogActions,
+  Button,
+  TextField,
+  Select,
+  MenuItem,
+  FormControl,
+  InputLabel,
+  InputAdornment
+} from '@mui/material';
+import {
+  Delete as DeleteIcon,
+  Edit as EditIcon,
+  AccessTime as TimeIcon,
+  Flag as FlagIcon,
+} from '@mui/icons-material';
+import { useRouteOptimizerStore } from '../stores/routeOptimizerStore';
+
+// Dialog di modifica
+const EditLocationDialog = ({ open, onClose, location, onSave }) => {
+  const [name, setName] = useState(location?.name || '');
+  const [address, setAddress] = useState(location?.address || '');
+  const [duration, setDuration] = useState(location?.duration || 30);
+  const [priority, setPriority] = useState(location?.priority || 'normal');
+  const [notes, setNotes] = useState(location?.notes || '');
+  
+  const handleSave = () => {
+    onSave({
+      ...location,
+      name,
+      address,
+      duration,
+      priority,
+      notes
+    });
+    onClose();
+  };
+  
+  return (
+    <Dialog open={open} onClose={onClose} maxWidth="sm" fullWidth>
+      <DialogTitle>Modifica Punto</DialogTitle>
+      <DialogContent>
+        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2, pt: 1 }}>
+          <TextField
+            label="Nome"
+            fullWidth
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+          />
+          
+          <TextField
+            label="Indirizzo"
+            fullWidth
+            value={address}
+            onChange={(e) => setAddress(e.target.value)}
+          />
+          
+          <TextField
+            label="Durata visita (minuti)"
+            type="number"
+            fullWidth
+            value={duration}
+            onChange={(e) => setDuration(parseInt(e.target.value) || 30)}
+            InputProps={{
+              startAdornment: (
+                <InputAdornment position="start">
+                  <TimeIcon />
+                </InputAdornment>
+              ),
+            }}
+          />
+          
+          <FormControl fullWidth>
+            <InputLabel>Priorità</InputLabel>
+            <Select
+              value={priority}
+              onChange={(e) => setPriority(e.target.value)}
+              label="Priorità"
+            >
+              <MenuItem value="high">Alta</MenuItem>
+              <MenuItem value="normal">Normale</MenuItem>
+              <MenuItem value="low">Bassa</MenuItem>
+            </Select>
+          </FormControl>
+          
+          <TextField
+            label="Note"
+            fullWidth
+            multiline
+            rows={2}
+            value={notes}
+            onChange={(e) => setNotes(e.target.value)}
+          />
+        </Box>
+      </DialogContent>
+      <DialogActions>
+        <Button onClick={onClose}>Annulla</Button>
+        <Button onClick={handleSave} variant="contained">Salva</Button>
+      </DialogActions>
+    </Dialog>
+  );
+};
+
+const SelectedLocationsTable = () => {
+  const { locations, removeLocation, updateLocation } = useRouteOptimizerStore();
+  const [editDialogOpen, setEditDialogOpen] = useState(false);
+  const [locationToEdit, setLocationToEdit] = useState(null);
+  
+  const handleEdit = (location) => {
+    setLocationToEdit(location);
+    setEditDialogOpen(true);
+  };
+  
+  const handleSaveEdit = (updatedLocation) => {
+    updateLocation(updatedLocation.id, updatedLocation);
+  };
+  
+  const getPriorityColor = (priority) => {
+    switch (priority) {
+      case 'high': return 'error';
+      case 'normal': return 'primary';
+      case 'low': return 'default';
+      default: return 'primary';
+    }
+  };
+  
+  const getPriorityLabel = (priority) => {
+    switch (priority) {
+      case 'high': return 'Alta';
+      case 'normal': return 'Normale';
+      case 'low': return 'Bassa';
+      default: return 'Normale';
+    }
+  };
+  
+  return (
+    <Box sx={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+      {locations.length === 0 ? (
+        <Box sx={{ 
+          display: 'flex', 
+          justifyContent: 'center', 
+          alignItems: 'center', 
+          height: '100%', 
+          flexDirection: 'column', 
+          p: 3 
+        }}>
+          <Typography variant="body1" color="text.secondary" align="center">
+            Nessun POS selezionato.
+          </Typography>
+          <Typography variant="body2" color="text.secondary" align="center" sx={{ mt: 1 }}>
+            Aggiungi almeno due punti dalla tabella centrale per poter ottimizzare il percorso.
+          </Typography>
+        </Box>
+      ) : (
+        <TableContainer sx={{ flex: 1, overflow: 'auto' }}>
+          <Table size="small">
+            <TableHead>
+              <TableRow>
+                <TableCell>Nome/Indirizzo</TableCell>
+                <TableCell>Info</TableCell>
+                <TableCell></TableCell>
+              </TableRow>
+            </TableHead>
+            <TableBody>
+              {locations.map((location, index) => (
+                <TableRow key={location.id} hover>
+                  <TableCell>
+                    <Typography variant="body2">{location.name}</Typography>
+                    <Typography variant="caption" color="text.secondary">
+                      {location.address}
+                    </Typography>
+                    {location.notes && (
+                      <Typography variant="caption" color="text.secondary" sx={{ display: 'block', fontStyle: 'italic' }}>
+                        Note: {location.notes}
+                      </Typography>
+                    )}
+                  </TableCell>
+                  <TableCell>
+                    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5 }}>
+                      <Chip 
+                        size="small" 
+                        icon={<TimeIcon />} 
+                        label={`${location.duration} min`} 
+                        color="primary" 
+                        variant="outlined" 
+                      />
+                      <Chip 
+                        size="small" 
+                        icon={<FlagIcon />} 
+                        label={getPriorityLabel(location.priority)} 
+                        color={getPriorityColor(location.priority)} 
+                        variant="outlined" 
+                      />
+                    </Box>
+                  </TableCell>
+                  <TableCell align="right">
+                    <Box sx={{ display: 'flex', justifyContent: 'flex-end' }}>
+                      <Tooltip title="Modifica">
+                        <IconButton size="small" onClick={() => handleEdit(location)}>
+                          <EditIcon fontSize="small" />
+                        </IconButton>
+                      </Tooltip>
+                      <Tooltip title="Rimuovi">
+                        <IconButton size="small" onClick={() => removeLocation(location.id)}>
+                          <DeleteIcon fontSize="small" />
+                        </IconButton>
+                      </Tooltip>
+                    </Box>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </TableContainer>
+      )}
+      
+      <Typography variant="body2" color="text.secondary" sx={{ mt: 2, mb: 1 }}>
+        {locations.length > 0 ? 
+          `Totale: ${locations.length} punti, ${locations.reduce((acc, loc) => acc + (loc.duration || 30), 0)} min di visite` : 
+          ''}
+      </Typography>
+      
+      {/* Dialog di modifica */}
+      {locationToEdit && (
+        <EditLocationDialog 
+          open={editDialogOpen} 
+          onClose={() => setEditDialogOpen(false)} 
+          location={locationToEdit}
+          onSave={handleSaveEdit}
+        />
+      )}
+    </Box>
+  );
+};
+
+export default SelectedLocationsTable;
+
+
+# ====== File: /var/www/html/insightg/wup/r_wup/src/components/modules/RouteOptimizer/components/ScheduleSettings.jsx ======
+import React, { useState } from 'react';
+import {
+  Box,
+  Grid,
+  TextField,
+  FormControl,
+  InputLabel,
+  Select,
+  MenuItem,
+  FormControlLabel,
+  Switch,
+  Typography,
+  InputAdornment,
+  Tooltip,
+  IconButton,
+  Divider,
+  Paper,
+  Checkbox,
+  Accordion,
+  AccordionSummary,
+  AccordionDetails,
+  Button
+} from '@mui/material';
+import {
+  AccessTime as TimeIcon,
+  DirectionsCar as CarIcon,
+  DirectionsWalk as WalkIcon,
+  DirectionsBike as BikeIcon,
+  DirectionsTransit as TransitIcon,
+  Restaurant as LunchIcon,
+  Info as InfoIcon,
+  CalendarToday as CalendarIcon,
+  Home as HomeIcon,
+  MyLocation as LocationIcon,
+  ExpandMore as ExpandMoreIcon,
+  Settings as SettingsIcon,
+  CompareArrows as OptimizeIcon,
+  Calculate as CalculateIcon,
+  Loop as LoopIcon
+} from '@mui/icons-material';
+import { useRouteOptimizerStore } from '../stores/routeOptimizerStore';
+import { geocodeAddress } from '../api/routeOptimizerApi';
+
+const ScheduleSettings = () => {
+  const { scheduleSettings, updateScheduleSettings, locations } = useRouteOptimizerStore();
+  const [customStartAddress, setCustomStartAddress] = useState('');
+  const [addressError, setAddressError] = useState('');
+  const [geocoding, setGeocoding] = useState(false);
+  
+  // Tutti i pannelli aperti di default
+  const [expandedPanel, setExpandedPanel] = useState(['startLocation', 'workHours', 'planning', 'travelOptions', 'advancedOptions']);
+
+  const handlePanelChange = (panel) => (event, isExpanded) => {
+    setExpandedPanel(prev => {
+      if (isExpanded) {
+        return [...prev, panel];
+      } else {
+        return prev.filter(p => p !== panel);
+      }
+    });
+  };
+
+  const handleChange = (field, value) => {
+    const updatedSettings = { ...scheduleSettings };
+    updatedSettings[field] = value;
+    
+    // Controlla le dipendenze tra i campi
+    if (field === 'workStartTime' && new Date(`2000-01-01T${value}`) >= new Date(`2000-01-01T${updatedSettings.workEndTime}`)) {
+      updatedSettings.workEndTime = addMinutes(value, 480); // +8 ore
+    }
+    
+    if (field === 'lunchBreakStart') {
+      // Assicurati che la pausa pranzo sia all'interno dell'orario di lavoro
+      const lunchStart = new Date(`2000-01-01T${value}`);
+      const workStart = new Date(`2000-01-01T${updatedSettings.workStartTime}`);
+      const workEnd = new Date(`2000-01-01T${updatedSettings.workEndTime}`);
+      
+      if (lunchStart < workStart || lunchStart > workEnd) {
+        // Imposta la pausa pranzo a mezzogiorno o metà della giornata lavorativa
+        const midday = new Date(`2000-01-01T12:00`);
+        if (midday >= workStart && midday <= workEnd) {
+          updatedSettings.lunchBreakStart = '12:00';
+        } else {
+          const workDuration = (workEnd - workStart) / (1000 * 60 * 60);
+          const middlePoint = new Date(workStart.getTime() + workDuration * 1000 * 60 * 30);
+          updatedSettings.lunchBreakStart = middlePoint.toTimeString().slice(0, 5);
+        }
+      }
+    }
+    
+    updateScheduleSettings(updatedSettings);
+  };
+
+  // Funzione di utilità per aggiungere minuti a un orario formato "HH:MM"
+  const addMinutes = (timeString, minutes) => {
+    const [hours, mins] = timeString.split(':').map(Number);
+    const date = new Date();
+    date.setHours(hours, mins + minutes, 0);
+    return date.toTimeString().slice(0, 5);
+  };
+
+  const handleStartLocationTypeChange = (e) => {
+    const type = e.target.value;
+    handleChange('startLocationType', type);
+    
+    // Resetta l'indirizzo personalizzato se si seleziona "firstLocation"
+    if (type === 'firstLocation') {
+      handleChange('startLocation', null);
+      setCustomStartAddress('');
+    }
+  };
+
+  const handleSetCustomStartLocation = async () => {
+    if (!customStartAddress.trim()) {
+      setAddressError('Inserisci un indirizzo di partenza');
+      return;
+    }
+
+    setGeocoding(true);
+    setAddressError('');
+
+    try {
+      const result = await geocodeAddress(customStartAddress);
+      
+      if (result && result.lat && result.lng) {
+        handleChange('startLocation', {
+          address: customStartAddress,
+          lat: result.lat,
+          lng: result.lng
+        });
+        setAddressError('');
+      } else {
+        setAddressError('Impossibile geocodificare questo indirizzo');
+      }
+    } catch (error) {
+      setAddressError('Errore nella geocodifica: ' + error.message);
+    } finally {
+      setGeocoding(false);
+    }
+  };
+
+  const getTravelModeIcon = (mode) => {
+    switch (mode) {
+      case 'driving':
+        return <CarIcon />;
+      case 'walking':
+        return <WalkIcon />;
+      case 'bicycling':
+        return <BikeIcon />;
+      case 'transit':
+        return <TransitIcon />;
+      default:
+        return <CarIcon />;
+    }
+  };
+
+  const resetToDefaults = () => {
+    const defaultSettings = {
+      startLocationType: 'firstLocation',
+      startLocation: null,
+      returnToStart: false,
+      workStartTime: '08:00',
+      workEndTime: '18:00',
+      lunchBreakStart: '13:00',
+      lunchBreakDuration: 60,
+      maxDays: 7,
+      travelMode: 'driving',
+      considerTraffic: true,
+      avoidTolls: false,
+      avoidHighways: false,
+      useHubForDailyStart: false,
+      optimizationMethod: 'global',
+    };
+    
+    updateScheduleSettings(defaultSettings);
+    setCustomStartAddress('');
+    setAddressError('');
+  };
+
+  return (
+    <Box>
+      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
+        <Typography variant="subtitle1" sx={{ fontWeight: 'medium' }}>
+          <SettingsIcon sx={{ mr: 1, verticalAlign: 'middle' }} />
+          Parametri Pianificazione
+        </Typography>
+        
+        <Button 
+          size="small" 
+          onClick={resetToDefaults}
+          variant="outlined"
+        >
+          Ripristina Predefiniti
+        </Button>
+      </Box>
+      
+      <Divider sx={{ mb: 2 }} />
+      
+      {/* Sezioni in accordion per migliorare la navigabilità */}
+      <Accordion 
+        expanded={expandedPanel.includes('startLocation')} 
+        onChange={handlePanelChange('startLocation')}
+        sx={{ mb: 1 }}
+      >
+        <AccordionSummary expandIcon={<ExpandMoreIcon />}>
+          <Typography>
+            <HomeIcon sx={{ mr: 1, verticalAlign: 'middle' }} />
+            Punto di Partenza
+          </Typography>
+        </AccordionSummary>
+        <AccordionDetails>
+          <FormControl fullWidth sx={{ mb: 2 }}>
+            <InputLabel>Tipo di partenza</InputLabel>
+            <Select
+              value={scheduleSettings.startLocationType || 'firstLocation'}
+              onChange={handleStartLocationTypeChange}
+              label="Tipo di partenza"
+              size="small"
+            >
+              <MenuItem value="firstLocation">Usa primo POS come partenza</MenuItem>
+              <MenuItem value="custom">Indirizzo personalizzato</MenuItem>
+            </Select>
+          </FormControl>
+          
+          {scheduleSettings.startLocationType === 'custom' && (
+            <Box sx={{ mb: 2 }}>
+              <TextField
+                label="Indirizzo di partenza"
+                fullWidth
+                value={customStartAddress}
+                onChange={(e) => setCustomStartAddress(e.target.value)}
+                error={!!addressError}
+                helperText={addressError}
+                size="small"
+                InputProps={{
+                  startAdornment: (
+                    <InputAdornment position="start">
+                      <HomeIcon />
+                    </InputAdornment>
+                  ),
+                  endAdornment: (
+                    <InputAdornment position="end">
+                      <IconButton 
+                        onClick={handleSetCustomStartLocation}
+                        disabled={geocoding || !customStartAddress.trim()}
+                        size="small"
+                      >
+                        <LocationIcon />
+                      </IconButton>
+                    </InputAdornment>
+                  )
+                }}
+                sx={{ mb: 1 }}
+              />
+              
+              {scheduleSettings.startLocation && (
+                <Paper variant="outlined" sx={{ p: 1, bgcolor: 'action.hover' }}>
+                  <Typography variant="caption" display="block">
+                    Indirizzo impostato come punto di partenza:
+                  </Typography>
+                  <Typography variant="body2">
+                    {scheduleSettings.startLocation.address}
+                  </Typography>
+                </Paper>
+              )}
+            </Box>
+          )}
+          
+          <FormControlLabel
+            control={
+              <Checkbox
+                checked={scheduleSettings.returnToStart || false}
+                onChange={(e) => handleChange('returnToStart', e.target.checked)}
+                size="small"
+              />
+            }
+            label="Ritorna al punto di partenza come ultima tappa"
+          />
+
+          {/* Nuovo controllo per l'utilizzo dell'HUB */}
+          <Divider sx={{ my: 2 }} />
+          
+          <Box sx={{ mb: 1 }}>
+            <FormControlLabel
+              control={
+                <Checkbox
+                  checked={scheduleSettings.useHubForDailyStart || false}
+                  onChange={(e) => handleChange('useHubForDailyStart', e.target.checked)}
+                  size="small"
+                />
+              }
+              label={
+                <Box sx={{ display: 'flex', alignItems: 'center' }}>
+                  <Typography>Usa punto di partenza come HUB per ogni giorno</Typography>
+                  <Tooltip title="Se selezionato, ogni giorno inizierà dal punto di partenza specificato (HUB). Altrimenti, i giorni successivi inizieranno dall'ultimo punto visitato del giorno precedente.">
+                    <IconButton size="small">
+                      <InfoIcon fontSize="small" />
+                    </IconButton>
+                  </Tooltip>
+                </Box>
+              }
+            />
+          </Box>
+        </AccordionDetails>
+      </Accordion>
+
+      <Accordion 
+        expanded={expandedPanel.includes('workHours')} 
+        onChange={handlePanelChange('workHours')}
+        sx={{ mb: 1 }}
+      >
+        <AccordionSummary expandIcon={<ExpandMoreIcon />}>
+          <Typography>
+            <TimeIcon sx={{ mr: 1, verticalAlign: 'middle' }} />
+            Orari di Lavoro e Pause
+          </Typography>
+        </AccordionSummary>
+        <AccordionDetails>
+          <Grid container spacing={2}>
+            <Grid item xs={12}>
+              <Typography variant="subtitle2" gutterBottom>
+                Orario Giornaliero
+              </Typography>
+            </Grid>
+            
+            <Grid item xs={12} sm={6}>
+              <TextField
+                label="Orario Inizio"
+                type="time"
+                value={scheduleSettings.workStartTime}
+                onChange={(e) => handleChange('workStartTime', e.target.value)}
+                InputProps={{
+                  startAdornment: (
+                    <InputAdornment position="start">
+                      <TimeIcon />
+                    </InputAdornment>
+                  ),
+                }}
+                fullWidth
+                size="small"
+                inputProps={{
+                  step: 300, // 5 min
+                }}
+              />
+            </Grid>
+            
+            <Grid item xs={12} sm={6}>
+              <TextField
+                label="Orario Fine"
+                type="time"
+                value={scheduleSettings.workEndTime}
+                onChange={(e) => handleChange('workEndTime', e.target.value)}
+                InputProps={{
+                  startAdornment: (
+                    <InputAdornment position="start">
+                      <TimeIcon />
+                    </InputAdornment>
+                  ),
+                }}
+                fullWidth
+                size="small"
+                inputProps={{
+                  step: 300, // 5 min
+                }}
+              />
+            </Grid>
+            
+            <Grid item xs={12}>
+              <Typography variant="subtitle2" gutterBottom sx={{ mt: 1 }}>
+                Pausa Pranzo
+              </Typography>
+            </Grid>
+            
+            <Grid item xs={12} sm={6}>
+              <TextField
+                label="Orario Inizio"
+                type="time"
+                value={scheduleSettings.lunchBreakStart}
+                onChange={(e) => handleChange('lunchBreakStart', e.target.value)}
+                InputProps={{
+                  startAdornment: (
+                    <InputAdornment position="start">
+                      <LunchIcon />
+                    </InputAdornment>
+                  ),
+                }}
+                fullWidth
+                size="small"
+                inputProps={{
+                  step: 300, // 5 min
+                }}
+              />
+            </Grid>
+            
+            <Grid item xs={12} sm={6}>
+              <TextField
+                label="Durata (minuti)"
+                type="number"
+                value={scheduleSettings.lunchBreakDuration}
+                onChange={(e) => handleChange('lunchBreakDuration', parseInt(e.target.value) || 60)}
+                InputProps={{
+                  startAdornment: (
+                    <InputAdornment position="start">
+                      <TimeIcon />
+                    </InputAdornment>
+                  ),
+                }}
+                fullWidth
+                size="small"
+                inputProps={{
+                  min: 0,
+                  max: 120,
+                  step: 5
+                }}
+              />
+            </Grid>
+          </Grid>
+        </AccordionDetails>
+      </Accordion>
+
+      <Accordion 
+        expanded={expandedPanel.includes('planning')} 
+        onChange={handlePanelChange('planning')}
+        sx={{ mb: 1 }}
+      >
+        <AccordionSummary expandIcon={<ExpandMoreIcon />}>
+          <Typography>
+            <CalendarIcon sx={{ mr: 1, verticalAlign: 'middle' }} />
+            Pianificazione
+          </Typography>
+        </AccordionSummary>
+        <AccordionDetails>
+          <Grid container spacing={2}>
+            <Grid item xs={12} sm={6}>
+              <TextField
+                label="Massimi Giorni"
+                type="number"
+                value={scheduleSettings.maxDays}
+                onChange={(e) => handleChange('maxDays', parseInt(e.target.value) || 1)}
+                InputProps={{
+                  startAdornment: (
+                    <InputAdornment position="start">
+                      <CalendarIcon />
+                    </InputAdornment>
+                  ),
+                }}
+                fullWidth
+                size="small"
+                inputProps={{
+                  min: 1,
+                  max: 14
+                }}
+              />
+            </Grid>
+            
+            <Grid item xs={12} sm={6}>
+              <FormControl fullWidth size="small">
+                <InputLabel>Modalità Viaggio</InputLabel>
+                <Select
+                  value={scheduleSettings.travelMode}
+                  onChange={(e) => handleChange('travelMode', e.target.value)}
+                  label="Modalità Viaggio"
+                  startAdornment={
+                    <InputAdornment position="start">
+                      {getTravelModeIcon(scheduleSettings.travelMode)}
+                    </InputAdornment>
+                  }
+                >
+                  <MenuItem value="driving">Auto</MenuItem>
+                  <MenuItem value="walking">A piedi</MenuItem>
+                  <MenuItem value="bicycling">Bicicletta</MenuItem>
+                  <MenuItem value="transit">Trasporto pubblico</MenuItem>
+                </Select>
+              </FormControl>
+            </Grid>
+          </Grid>
+        </AccordionDetails>
+      </Accordion>
+
+      <Accordion 
+        expanded={expandedPanel.includes('travelOptions')} 
+        onChange={handlePanelChange('travelOptions')}
+        sx={{ mb: 1 }}
+      >
+        <AccordionSummary expandIcon={<ExpandMoreIcon />}>
+          <Typography>
+            <CarIcon sx={{ mr: 1, verticalAlign: 'middle' }} />
+            Opzioni di Viaggio
+          </Typography>
+        </AccordionSummary>
+        <AccordionDetails>
+          <Grid container spacing={1}>
+            <Grid item xs={12}>
+              <FormControlLabel
+                control={
+                  <Switch
+                    checked={scheduleSettings.considerTraffic}
+                    onChange={(e) => handleChange('considerTraffic', e.target.checked)}
+                    size="small"
+                  />
+                }
+                label="Considera traffico"
+              />
+            </Grid>
+            
+            <Grid item xs={12}>
+              <FormControlLabel
+                control={
+                  <Switch
+                    checked={scheduleSettings.avoidTolls}
+                    onChange={(e) => handleChange('avoidTolls', e.target.checked)}
+                    size="small"
+                  />
+                }
+                label="Evita pedaggi"
+              />
+            </Grid>
+            
+            <Grid item xs={12}>
+              <FormControlLabel
+                control={
+                  <Switch
+                    checked={scheduleSettings.avoidHighways}
+                    onChange={(e) => handleChange('avoidHighways', e.target.checked)}
+                    size="small"
+                  />
+                }
+                label="Evita autostrade"
+              />
+            </Grid>
+          </Grid>
+        </AccordionDetails>
+      </Accordion>
+
+      {/* Nuova sezione per impostazioni avanzate (metodo di ottimizzazione) */}
+      <Accordion 
+        expanded={expandedPanel.includes('advancedOptions')} 
+        onChange={handlePanelChange('advancedOptions')}
+      >
+        <AccordionSummary expandIcon={<ExpandMoreIcon />}>
+          <Typography>
+            <CalculateIcon sx={{ mr: 1, verticalAlign: 'middle' }} />
+            Opzioni Avanzate
+          </Typography>
+        </AccordionSummary>
+        <AccordionDetails>
+          <Grid container spacing={2}>
+            <Grid item xs={12}>
+              <Typography variant="subtitle2" gutterBottom>
+                Metodo di Ottimizzazione
+              </Typography>
+            </Grid>
+            
+            <Grid item xs={12}>
+              <FormControl fullWidth size="small">
+                <InputLabel>Metodo di Ottimizzazione</InputLabel>
+                <Select
+                  value={scheduleSettings.optimizationMethod || 'global'}
+                  onChange={(e) => handleChange('optimizationMethod', e.target.value)}
+                  label="Metodo di Ottimizzazione"
+                  startAdornment={
+                    <InputAdornment position="start">
+                      <OptimizeIcon />
+                    </InputAdornment>
+                  }
+                >
+                  <MenuItem value="global">Ottimizzazione Globale</MenuItem>
+                  <MenuItem value="daily">Ottimizzazione Giornaliera</MenuItem>
+                </Select>
+              </FormControl>
+              <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 1 }}>
+                <InfoIcon fontSize="small" sx={{ verticalAlign: 'text-bottom', mr: 0.5 }} />
+                L'ottimizzazione globale considera tutti i punti insieme prima di dividerli in giorni,
+                mentre l'ottimizzazione giornaliera ottimizza ogni giorno separatamente.
+              </Typography>
+            </Grid>
+          </Grid>
+        </AccordionDetails>
+      </Accordion>
+    </Box>
+  );
+};
+
+export default ScheduleSettings;
+
+
+# ====== File: /var/www/html/insightg/wup/r_wup/src/components/modules/RouteOptimizer/components/RouteTable.jsx ======
+import React, { useState } from 'react';
+import {
+  Box,
+  Typography,
+  Table,
+  TableBody,
+  TableCell,
+  TableContainer,
+  TableHead,
+  TableRow,
+  Paper,
+  Chip,
+  IconButton,
+  Collapse,
+  Divider,
+  Tab,
+  Tabs
+} from '@mui/material';
+import {
+  KeyboardArrowDown as ExpandIcon,
+  KeyboardArrowUp as CollapseIcon,
+  Flag as FlagIcon,
+  AccessTime as TimeIcon,
+  DirectionsCar as CarIcon,
+  Navigation as NavigationIcon,
+  Place as PlaceIcon,
+  Today as DateIcon
+} from '@mui/icons-material';
+
+// Componente riga espandibile per i dettagli della singola visita
+const VisitRow = ({ visit, index, dayNumber }) => {
+  const [open, setOpen] = useState(false);
+  
+  // Formatta l'ora nel formato HH:MM
+  const formatTime = (timeString) => {
+    return new Date(timeString).toLocaleTimeString([], { 
+      hour: '2-digit', 
+      minute: '2-digit' 
+    });
+  };
+  
+  // Formatta la data nel formato GG/MM/AAAA
+  const formatDate = (dateString) => {
+    return new Date(dateString).toLocaleDateString();
+  };
+  
+  // Colore per la priorità
+  const getPriorityColor = (priority) => {
+    switch (priority) {
+      case 'high':
+        return 'error';
+      case 'normal':
+        return 'primary';
+      case 'low':
+        return 'default';
+      default:
+        return 'primary';
+    }
+  };
+  
+  // Crea un chip per la priorità
+  const getPriorityChip = (priority) => {
+    const label = {
+      high: 'Alta',
+      normal: 'Normale',
+      low: 'Bassa'
+    }[priority] || 'Normale';
+    
+    return (
+      <Chip 
+        size="small" 
+        icon={<FlagIcon />} 
+        label={label} 
+        color={getPriorityColor(priority)} 
+        variant="outlined" 
+      />
+    );
+  };
+
+  return (
+    <>
+      <TableRow 
+        sx={{ 
+          '&:hover': { bgcolor: 'action.hover' },
+          bgcolor: index % 2 === 0 ? 'inherit' : 'action.hover'
+        }}
+      >
+        <TableCell>
+          <IconButton
+            size="small"
+            onClick={() => setOpen(!open)}
+          >
+            {open ? <CollapseIcon /> : <ExpandIcon />}
+          </IconButton>
+        </TableCell>
+        <TableCell>
+          <Box sx={{ display: 'flex', alignItems: 'center' }}>
+            <DateIcon sx={{ mr: 1, color: 'text.secondary' }} />
+            <Typography variant="body2">
+              Giorno {dayNumber + 1} - {formatDate(visit.arrivalTime)}
+            </Typography>
+          </Box>
+        </TableCell>
+        <TableCell>
+          <Box sx={{ display: 'flex', alignItems: 'center' }}>
+            <PlaceIcon sx={{ mr: 1, color: 'primary.main' }} />
+            <Box>
+              <Typography variant="body2">{visit.location.name}</Typography>
+              <Typography variant="caption" color="text.secondary">
+                {visit.location.sf_territory || ''}
+              </Typography>
+            </Box>
+          </Box>
+        </TableCell>
+        <TableCell align="center">
+          {formatTime(visit.arrivalTime)}
+        </TableCell>
+        <TableCell align="center">
+          {formatTime(visit.departureTime)}
+        </TableCell>
+        <TableCell align="center">
+          <Chip 
+            size="small" 
+            icon={<TimeIcon />} 
+            label={`${visit.location.duration} min`} 
+            color="primary" 
+            variant="outlined" 
+          />
+        </TableCell>
+        <TableCell>
+          {getPriorityChip(visit.location.priority)}
+        </TableCell>
+      </TableRow>
+      
+      <TableRow>
+        <TableCell style={{ paddingBottom: 0, paddingTop: 0 }} colSpan={7}>
+          <Collapse in={open} timeout="auto" unmountOnExit>
+            <Box sx={{ margin: 1, p: 1, bgcolor: 'background.paper', borderRadius: 1 }}>
+              <Typography variant="subtitle2" gutterBottom component="div">
+                Dettagli Visita
+              </Typography>
+              <Divider sx={{ mb: 1 }} />
+              
+              <Box sx={{ mb: 2 }}>
+                <Typography variant="body2">
+                  <strong>Indirizzo:</strong> {visit.location.address}
+                </Typography>
+                
+                {visit.location.notes && (
+                  <Typography variant="body2" sx={{ mt: 1 }}>
+                    <strong>Note:</strong> {visit.location.notes}
+                  </Typography>
+                )}
+              </Box>
+              
+              {visit.travelInfo && (
+                <Box sx={{ mb: 1 }}>
+                  <Typography variant="subtitle2" gutterBottom>
+                    Info Viaggio {index > 0 ? 'dalla posizione precedente' : 'dall\'inizio'}
+                  </Typography>
+                  <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap' }}>
+                    <Chip 
+                      size="small" 
+                      icon={<CarIcon />} 
+                      label={`${Math.round(visit.travelInfo.distance / 1000)} km`} 
+                      color="info" 
+                      variant="outlined" 
+                    />
+                    <Chip 
+                      size="small" 
+                      icon={<TimeIcon />} 
+                      label={`${Math.round(visit.travelInfo.duration / 60)} min`} 
+                      color="info" 
+                      variant="outlined" 
+                    />
+                  </Box>
+                </Box>
+              )}
+            </Box>
+          </Collapse>
+        </TableCell>
+      </TableRow>
+    </>
+  );
+};
+
+// Componente principale tabella percorso
+const RouteTable = ({ route }) => {
+  const [activeTab, setActiveTab] = useState(0);
+  
+  if (!route || !route.days || route.days.length === 0) {
+    return (
+      <Paper sx={{ p: 3, textAlign: 'center' }}>
+        <Typography color="text.secondary">
+          Nessun percorso ottimizzato disponibile.
+        </Typography>
+      </Paper>
+    );
+  }
+  
+  const handleTabChange = (event, newValue) => {
+    setActiveTab(newValue);
+  };
+  
+  // Se abbiamo più giorni, mostriamo tabs
+  const multipleDay = route.days.length > 1;
+  
+  return (
+    <Box>
+      {multipleDay && (
+        <Tabs
+          value={activeTab}
+          onChange={handleTabChange}
+          variant="scrollable"
+          scrollButtons="auto"
+          sx={{ mb: 2 }}
+        >
+          <Tab icon={<DateIcon />} label="Tutti i giorni" />
+          {route.days.map((day, index) => (
+            <Tab key={index} icon={<DateIcon />} label={`Giorno ${index + 1}`} />
+          ))}
+        </Tabs>
+      )}
+      
+      <TableContainer component={Paper} variant="outlined">
+        <Table size="small">
+          <TableHead>
+            <TableRow>
+              <TableCell width="4%"></TableCell>
+              <TableCell width="15%">Giorno</TableCell>
+              <TableCell width="25%">Luogo</TableCell>
+              <TableCell width="12%" align="center">Arrivo</TableCell>
+              <TableCell width="12%" align="center">Partenza</TableCell>
+              <TableCell width="12%" align="center">Durata</TableCell>
+              <TableCell width="20%">Priorità</TableCell>
+            </TableRow>
+          </TableHead>
+          <TableBody>
+            {activeTab === 0 ? (
+              // Mostra tutti i giorni
+              route.days.flatMap((day, dayIndex) => 
+                day.visits.map((visit, visitIndex) => (
+                  <VisitRow 
+                    key={`${dayIndex}-${visitIndex}`} 
+                    visit={visit} 
+                    index={visitIndex} 
+                    dayNumber={dayIndex} 
+                  />
+                ))
+              )
+            ) : (
+              // Mostra solo il giorno selezionato
+              route.days[activeTab - 1].visits.map((visit, index) => (
+                <VisitRow 
+                  key={index} 
+                  visit={visit} 
+                  index={index} 
+                  dayNumber={activeTab - 1} 
+                />
+              ))
+            )}
+          </TableBody>
+        </Table>
+      </TableContainer>
+    </Box>
+  );
+};
+
+export default RouteTable;
+
+
+# ====== File: /var/www/html/insightg/wup/r_wup/src/components/modules/RouteOptimizer/components/InputPanel.jsx ======
+import React, { useState, useEffect } from 'react';
+import {
+  Box,
+  Typography,
+  TextField,
+  Button,
+  Grid,
+  Paper,
+  InputAdornment,
+  FormControl,
+  InputLabel,
+  Select,
+  MenuItem,
+  IconButton,
+  Divider,
+  CircularProgress,
+  TableContainer,
+  Table,
+  TableHead,
+  TableRow,
+  TableCell,
+  TableBody,
+  TablePagination,
+  Alert
+} from '@mui/material';
+import {
+  Add as AddIcon,
+  Delete as DeleteIcon,
+  Edit as EditIcon,
+  AccessTime as TimeIcon,
+  Flag as FlagIcon,
+  Search as SearchIcon
+} from '@mui/icons-material';
+import { useRouteOptimizerStore } from '../stores/routeOptimizerStore';
+import { geocodeAddress } from '../api/routeOptimizerApi';
+
+const InputPanel = () => {
+  const { locations, availablePOS, addLocation, removeLocation } = useRouteOptimizerStore();
+  
+  const [searchQuery, setSearchQuery] = useState('');
+  const [filteredPOS, setFilteredPOS] = useState([]);
+  const [selectedPOS, setSelectedPOS] = useState(null);
+  const [manualAddress, setManualAddress] = useState('');
+  const [duration, setDuration] = useState(30);
+  const [priority, setPriority] = useState('normal');
+  const [notes, setNotes] = useState('');
+  const [loading, setLoading] = useState(false);
+  
+  // Paginazione della tabella POS
+  const [page, setPage] = useState(0);
+  const [rowsPerPage, setRowsPerPage] = useState(10);
+
+  // Filtra i POS in base alla ricerca
+  useEffect(() => {
+    if (!availablePOS) return;
+    
+    if (searchQuery.length < 2) {
+      setFilteredPOS(availablePOS.slice(0, 100)); // Limita a 100 record per prestazioni
+      return;
+    }
+    
+    const query = searchQuery.toLowerCase();
+    const filtered = availablePOS.filter(pos => 
+      pos.nome_account?.toLowerCase().includes(query) || 
+      pos.indirizzo_spedizioni?.toLowerCase().includes(query) ||
+      pos.sf_territory?.toLowerCase().includes(query)
+    );
+    
+    setFilteredPOS(filtered);
+    setPage(0); // Reset alla prima pagina dopo il filtro
+  }, [searchQuery, availablePOS]);
+
+  // Inizializza i dati filtrati all'avvio
+  useEffect(() => {
+    if (availablePOS && availablePOS.length > 0 && filteredPOS.length === 0) {
+      setFilteredPOS(availablePOS.slice(0, 100));
+    }
+  }, [availablePOS]);
+
+  // Aggiungi punto
+  const handleAddLocation = async () => {
+    setLoading(true);
+    try {
+      let locationData;
+      
+      if (selectedPOS) {
+        // POS selezionato dalla tabella
+        locationData = {
+          id: `pos_${selectedPOS.id}`,
+          name: selectedPOS.nome_account,
+          address: selectedPOS.indirizzo_spedizioni || "Indirizzo non disponibile",
+          sf_territory: selectedPOS.sf_territory || "-",
+          duration: duration,
+          priority: priority,
+          notes: notes
+        };
+      } else if (manualAddress) {
+        // Indirizzo manuale con geocodifica
+        try {
+          const geocodeResult = await geocodeAddress(manualAddress);
+          
+          locationData = {
+            id: `manual_${Date.now()}`,
+            name: `Indirizzo: ${manualAddress}`,
+            address: manualAddress,
+            lat: geocodeResult.data.lat,
+            lng: geocodeResult.data.lng,
+            sf_territory: "-",
+            duration: duration,
+            priority: priority,
+            notes: notes
+          };
+        } catch (error) {
+          throw new Error(`Errore nella geocodifica: ${error.message}`);
+        }
+      } else {
+        throw new Error('Seleziona un POS o inserisci un indirizzo');
+      }
+      
+      addLocation(locationData);
+      
+      // Reset form
+      setSelectedPOS(null);
+      setManualAddress('');
+      setDuration(30);
+      setNotes('');
+    } catch (error) {
+      console.error("Error adding location:", error);
+      alert(error.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Gestione paginazione
+  const handleChangePage = (event, newPage) => {
+    setPage(newPage);
+  };
+
+  const handleChangeRowsPerPage = (event) => {
+    setRowsPerPage(parseInt(event.target.value, 10));
+    setPage(0);
+  };
+
+  // Calcola righe da visualizzare
+  const displayedRows = filteredPOS.slice(
+    page * rowsPerPage,
+    page * rowsPerPage + rowsPerPage
+  );
+
+  return (
+    <Box>
+      <Typography variant="h6" gutterBottom>
+        Punti da Visitare
+      </Typography>
+      <Divider sx={{ mb: 2 }} />
+      
+      <Grid container spacing={2}>
+        {/* Ricerca POS */}
+        <Grid item xs={12}>
+          <TextField
+            label="Cerca POS per nome, indirizzo o territorio"
+            fullWidth
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            variant="outlined"
+            InputProps={{
+              endAdornment: (
+                <InputAdornment position="end">
+                  <SearchIcon />
+                </InputAdornment>
+              )
+            }}
+          />
+        </Grid>
+        
+        {/* Tabella POS */}
+        <Grid item xs={12}>
+          <Paper sx={{ width: '100%', overflow: 'hidden' }}>
+            <TableContainer sx={{ maxHeight: 300 }}>
+              <Table stickyHeader size="small">
+                <TableHead>
+                  <TableRow>
+                    <TableCell padding="checkbox" width="40px">Sel.</TableCell>
+                    <TableCell>Nome POS</TableCell>
+                    <TableCell>Indirizzo</TableCell>
+                    <TableCell>Territorio</TableCell>
+                  </TableRow>
+                </TableHead>
+                <TableBody>
+                  {displayedRows.length === 0 ? (
+                    <TableRow>
+                      <TableCell colSpan={4} align="center">
+                        {availablePOS?.length > 0 
+                          ? 'Nessun POS trovato con questo filtro' 
+                          : 'Caricamento POS in corso...'}
+                      </TableCell>
+                    </TableRow>
+                  ) : (
+                    displayedRows.map((pos) => (
+                      <TableRow
+                        key={pos.id}
+                        hover
+                        selected={selectedPOS?.id === pos.id}
+                        onClick={() => setSelectedPOS(pos)}
+                        sx={{ cursor: 'pointer' }}
+                      >
+                        <TableCell padding="checkbox">
+                          <IconButton 
+                            size="small" 
+                            color={selectedPOS?.id === pos.id ? "primary" : "default"}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setSelectedPOS(pos);
+                            }}
+                          >
+                            <AddIcon fontSize="small" />
+                          </IconButton>
+                        </TableCell>
+                        <TableCell>{pos.nome_account}</TableCell>
+                        <TableCell>{pos.indirizzo_spedizioni || '-'}</TableCell>
+                        <TableCell>{pos.sf_territory || '-'}</TableCell>
+                      </TableRow>
+                    ))
+                  )}
+                </TableBody>
+              </Table>
+            </TableContainer>
+            <TablePagination
+              rowsPerPageOptions={[10, 25, 50]}
+              component="div"
+              count={filteredPOS.length}
+              rowsPerPage={rowsPerPage}
+              page={page}
+              onPageChange={handleChangePage}
+              onRowsPerPageChange={handleChangeRowsPerPage}
+            />
+          </Paper>
+        </Grid>
+        
+        {/* POS selezionato o indirizzo manuale */}
+        <Grid item xs={12}>
+          {selectedPOS ? (
+            <Paper sx={{ p: 2, bgcolor: 'action.hover' }}>
+              <Typography variant="subtitle2">POS selezionato:</Typography>
+              <Typography variant="body1">{selectedPOS.nome_account}</Typography>
+              <Typography variant="body2" color="text.secondary">
+                {selectedPOS.indirizzo_spedizioni || 'Indirizzo non disponibile'}
+              </Typography>
+              <Button size="small" sx={{ mt: 1 }} onClick={() => setSelectedPOS(null)}>
+                Annulla selezione
+              </Button>
+            </Paper>
+          ) : (
+            <TextField
+              label="O inserisci indirizzo manualmente"
+              fullWidth
+              value={manualAddress}
+              onChange={(e) => setManualAddress(e.target.value)}
+              variant="outlined"
+            />
+          )}
+        </Grid>
+        
+        {/* Durata visita */}
+        <Grid item xs={12} md={4}>
+          <TextField
+            label="Durata visita (minuti)"
+            type="number"
+            fullWidth
+            value={duration}
+            onChange={(e) => setDuration(parseInt(e.target.value) || 30)}
+            InputProps={{
+              startAdornment: (
+                <InputAdornment position="start">
+                  <TimeIcon />
+                </InputAdornment>
+              ),
+            }}
+          />
+        </Grid>
+        
+        {/* Priorità */}
+        <Grid item xs={12} md={4}>
+          <FormControl fullWidth>
+            <InputLabel>Priorità</InputLabel>
+            <Select
+              value={priority}
+              onChange={(e) => setPriority(e.target.value)}
+              label="Priorità"
+            >
+              <MenuItem value="high">Alta</MenuItem>
+              <MenuItem value="normal">Normale</MenuItem>
+              <MenuItem value="low">Bassa</MenuItem>
+            </Select>
+          </FormControl>
+        </Grid>
+        
+        {/* Note */}
+        <Grid item xs={12} md={4}>
+          <TextField
+            label="Note"
+            fullWidth
+            value={notes}
+            onChange={(e) => setNotes(e.target.value)}
+          />
+        </Grid>
+        
+        {/* Pulsante per aggiungere */}
+        <Grid item xs={12}>
+          <Box sx={{ display: 'flex', justifyContent: 'flex-end', mt: 2 }}>
+            <Button
+              variant="contained"
+              startIcon={loading ? <CircularProgress size={20} /> : <AddIcon />}
+              onClick={handleAddLocation}
+              disabled={(!selectedPOS && !manualAddress) || loading}
+            >
+              Aggiungi Punto
+            </Button>
+          </Box>
+        </Grid>
+      </Grid>
+      
+      {/* Elenco punti selezionati */}
+      <Typography variant="subtitle1" sx={{ mt: 4, mb: 2 }}>
+        Punti Selezionati ({locations.length})
+      </Typography>
+      
+      <TableContainer component={Paper}>
+        <Table size="small">
+          <TableHead>
+            <TableRow>
+              <TableCell>Nome/Indirizzo</TableCell>
+              <TableCell>Territorio</TableCell>
+              <TableCell>Durata</TableCell>
+              <TableCell>Priorità</TableCell>
+              <TableCell>Azioni</TableCell>
+            </TableRow>
+          </TableHead>
+          <TableBody>
+            {locations.length === 0 ? (
+              <TableRow>
+                <TableCell colSpan={5} align="center">
+                  Nessun punto selezionato. Aggiungi almeno due punti.
+                </TableCell>
+              </TableRow>
+            ) : (
+              locations.map((location) => (
+                <TableRow key={location.id}>
+                  <TableCell>
+                    <Typography variant="body2">{location.name}</Typography>
+                    <Typography variant="caption" color="text.secondary">
+                      {location.address}
+                    </Typography>
+                  </TableCell>
+                  <TableCell>{location.sf_territory}</TableCell>
+                  <TableCell>{location.duration} min</TableCell>
+                  <TableCell>{location.priority}</TableCell>
+                  <TableCell>
+                    <IconButton size="small" onClick={() => removeLocation(location.id)}>
+                      <DeleteIcon fontSize="small" />
+                    </IconButton>
+                  </TableCell>
+                </TableRow>
+              ))
+            )}
+          </TableBody>
+        </Table>
+      </TableContainer>
+    </Box>
+  );
+};
+
+export default InputPanel;
+
