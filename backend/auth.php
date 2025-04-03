@@ -3,8 +3,16 @@
 
 session_start();
 header('Content-Type: application/json');
+header('Access-Control-Allow-Origin: *'); 
+header('Access-Control-Allow-Methods: GET, POST, OPTIONS');
+header('Access-Control-Allow-Headers: Content-Type, Authorization');
 ini_set('display_errors', 0);
 ini_set('log_errors', 1);
+
+// Handle preflight requests
+if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
+    exit(0);
+}
 
 // Gestione errori
 function handleError($errno, $errstr, $errfile, $errline) {
@@ -283,6 +291,9 @@ function getUserProfile($db, $userId) {
     }
 }
 
+// Add debug logging at start 
+error_log("Auth request received: " . print_r($_REQUEST, true));
+
 // Router
 $router = [
     'login' => function() use ($db) {
@@ -321,8 +332,27 @@ $router = [
     }
 ];
 
+// Ensure we always return JSON, even for fatal errors
+function shutdownHandler() {
+    $error = error_get_last();
+    if ($error !== null && in_array($error['type'], [E_ERROR, E_PARSE, E_CORE_ERROR, E_COMPILE_ERROR])) {
+        http_response_code(500);
+        header('Content-Type: application/json');
+        echo json_encode([
+            'success' => false,
+            'error' => 'Internal server error',
+            'details' => $error['message'] . ' in ' . $error['file'] . ' on line ' . $error['line']
+        ]);
+    }
+}
+register_shutdown_function('shutdownHandler');
+
 // Gestione richieste
 try {
+    // Verify we can actually return JSON
+    if (headers_sent()) {
+        throw new Exception('Headers already sent, cannot return JSON');
+    }
     // Verifica se l'action è specificata nei parametri GET
     if (isset($_GET['action'])) {
         $action = $_GET['action'];

@@ -16,9 +16,14 @@ export default defineConfig({
     assetsDir: 'assets',
     emptyOutDir: true,
     rollupOptions: {
+      external: [
+        'three/examples/jsm/exporters/ColladaExporter.js',
+        'three/examples/jsm/exporters/OBJExporter.js',
+        'three/examples/jsm/exporters/GLTFExporter.js'
+      ],
       output: {
         manualChunks: {
-          'vendor': ['react', 'react-dom', '@mui/material', '@emotion/react', '@emotion/styled'],
+          'vendor': ['react', 'react-dom', '@mui/material', '@emotion/react', '@emotion/styled', 'three'],
           'dashboard': ['./src/components/modules/POSDashboard'],
           // Organizza altri chunck per moduli aggiuntivi
         }

@@ -433,6 +433,19 @@ export const getModuleMaterials = (moduleId) => {
 };
 
 /**
+ * Get components for a specific module
+ * @param {number} moduleId - Module ID
+ */
+export const getModuleComponents = (moduleId) => {
+  if (!moduleId) {
+    console.error('Missing module ID in getModuleComponents');
+    return Promise.resolve({ success: false, error: 'Module ID is required' });
+  }
+  
+  return apiUtils.get(`${ENDPOINT}?action=getModuleComponents&module_id=${moduleId}`);
+};
+
+/**
  * Save a material assignment to a module
  * @param {Object} data - Module material data
  */

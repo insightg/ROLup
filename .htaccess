@@ -1,9 +1,12 @@
 # Abilita il modulo RewriteEngine
 RewriteEngine On
 
-# Condizione: se la richiesta non è per un file esistente
+# Route API requests to backend server
+RewriteRule ^backend/(.*)$ http://localhost:8000/$1 [P,L]
+
+# Condizione: se la richiesta non ï¿½ per un file esistente
 RewriteCond %{REQUEST_FILENAME} !-f
-# Condizione: se la richiesta non è per una directory esistente
+# Condizione: se la richiesta non ï¿½ per una directory esistente
 RewriteCond %{REQUEST_FILENAME} !-d
 # Regola: reindirizza tutte le richieste non corrispondenti a index.html
 RewriteRule ^(.*)$ /index.html [L,QSA]

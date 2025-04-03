@@ -10,11 +10,20 @@ const __dirname = path.dirname(__filename);
 const app = express();
 const PORT = process.env.PORT || 8000;
 
-// Abilita CORS per le richieste dal frontend
+// Abilita CORS per tutte le richieste
 app.use(cors({
-  origin: ['http://localhost:3000', 'http://localhost:5173', 'http://localhost:4173'], // Includi anche la porta di preview di Vite
-  credentials: true
+  origin: true, // Accetta tutte le origini
+  credentials: true,
+  methods: ['GET', 'POST', 'OPTIONS', 'PUT', 'DELETE'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With']
 }));
+
+// Log delle richieste in ingresso
+app.use((req, res, next) => {
+  console.log(`Incoming ${req.method} request to ${req.path}`);
+  console.log('Headers:', req.headers);
+  next();
+});
 
 // Gestisci JSON e URL encoded data
 app.use(express.json({ limit: '50mb' }));

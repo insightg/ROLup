@@ -1,6 +1,6 @@
 // src/components/modules/PickManager/components/POSConfigDialog.jsx
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   Dialog,
   DialogTitle,
@@ -27,7 +27,10 @@ import {
   TableBody,
   TableRow,
   TableCell,
-  Chip
+  Chip,
+  Switch,
+  Slider,
+  Snackbar
 } from '@mui/material';
 import {
   Close as CloseIcon,
@@ -35,8 +38,13 @@ import {
   Delete as DeleteIcon,
   Save as SaveIcon,
   Warning as WarningIcon,
-  ShoppingBag as ShoppingBagIcon
+  ShoppingBag as ShoppingBagIcon,
+  ThreeDRotation as ThreeDIcon,
+  Download as DownloadIcon,
+  Photo as PhotoIcon
 } from '@mui/icons-material';
+import ModuleViewer3D from './ModuleViewer3D';
+import SimpleModelExporter from './SimpleModelExporter';
 import { usePickStore } from '../stores/pickStore';
 import {
   fetchPOSOrderDetails,
@@ -98,6 +106,20 @@ const POSConfigDialog = ({ open, onClose, orderId }) => {
   // Edit states
   const [editingModuleId, setEditingModuleId] = useState(null);
   const [editingMaterialId, setEditingMaterialId] = useState(null);
+  
+  // 3D Visualizer states
+  const [exportFormat, setExportFormat] = useState('stl');
+  const [exportScale, setExportScale] = useState(1);
+  const [textureQuality, setTextureQuality] = useState('medium');
+  const [includeMaterials, setIncludeMaterials] = useState(true);
+  const [includeTextures, setIncludeTextures] = useState(true);
+  const [environment, setEnvironment] = useState('indoor');
+  const [lighting, setLighting] = useState(70);
+  
+  // 3D scene references and exporters
+  const [sceneRef, setSceneRef] = useState(null);
+  const [modelExporter, setModelExporter] = useState(null);
+  const [notification, setNotification] = useState({ open: false, message: '', type: 'info' });
   
   const { modules, materials, suppliers, loadModules, loadMaterials, loadSuppliers } = usePickStore();
 
@@ -383,6 +405,112 @@ const POSConfigDialog = ({ open, onClose, orderId }) => {
     setEditingModuleId(null);
     setEditingMaterialId(null);
   };
+  
+  // 3D Visualizer handlers
+  const handleExportFormatChange = (e) => {
+    setExportFormat(e.target.value);
+  };
+  
+  const handleExportScaleChange = (e) => {
+    setExportScale(parseFloat(e.target.value));
+  };
+  
+  const handleTextureQualityChange = (e) => {
+    setTextureQuality(e.target.value);
+  };
+  
+  const handleIncludeMaterialsChange = (e) => {
+    setIncludeMaterials(e.target.checked);
+  };
+  
+  const handleIncludeTexturesChange = (e) => {
+    setIncludeTextures(e.target.checked);
+  };
+  
+  const handleEnvironmentChange = (env) => {
+    setEnvironment(env);
+  };
+  
+  const handleLightingChange = (e, value) => {
+    setLighting(value);
+  };
+  
+  // Funzione per gestire il caricamento della scena 3D
+  const handleSceneReady = (sceneInstance) => {
+    console.log('Scene is ready:', sceneInstance);
+    setSceneRef(sceneInstance);
+    
+    // Crea l'esportatore del modello quando la scena è pronta
+    if (sceneInstance && sceneInstance.scene) {
+      setModelExporter(new SimpleModelExporter(sceneInstance.scene));
+    }
+  };
+  
+  // Funzione per mostrare notifiche
+  const showNotification = (message, type = 'info') => {
+    setNotification({
+      open: true,
+      message,
+      type
+    });
+  };
+  
+  // Funzione per chiudere le notifiche
+  const handleCloseNotification = () => {
+    setNotification(prev => ({ ...prev, open: false }));
+  };
+  
+  // Funzione per esportare il modello 3D
+  const handleExport3DModel = () => {
+    if (!modelExporter) {
+      showNotification('Scene not ready for export. Please try again.', 'error');
+      return;
+    }
+    
+    try {
+      const fileName = `pos_modules_${orderId}_${new Date().toISOString().slice(0, 10)}.${exportFormat}`;
+      
+      const exportOptions = {
+        scale: exportScale,
+        fileName,
+        includeTextures,
+        includeMaterials,
+        textureQuality
+      };
+      
+      const result = modelExporter.export(exportFormat, exportOptions);
+      
+      if (result.success) {
+        showNotification(`Model successfully exported as ${fileName}`, 'success');
+      } else {
+        showNotification(`Export failed: ${result.error}`, 'error');
+      }
+    } catch (error) {
+      console.error('Error during export:', error);
+      showNotification(`Export failed: ${error.message}`, 'error');
+    }
+  };
+  
+  // Funzione per catturare uno screenshot della scena
+  const handleCaptureScreenshot = () => {
+    if (!modelExporter || !sceneRef) {
+      showNotification('Scene not ready for screenshot. Please try again.', 'error');
+      return;
+    }
+    
+    try {
+      const renderer = sceneRef.gl;
+      const camera = sceneRef.camera;
+      
+      const fileName = `pos_modules_${orderId}_${new Date().toISOString().slice(0, 10)}.png`;
+      
+      modelExporter.captureScreenshot(renderer, camera, { fileName });
+      showNotification(`Screenshot saved as ${fileName}`, 'success');
+    } catch (error) {
+      console.error('Error capturing screenshot:', error);
+      showNotification(`Screenshot capture failed: ${error.message}`, 'error');
+    }
+  };
 
   return (
     <Dialog
@@ -459,6 +587,7 @@ const POSConfigDialog = ({ open, onClose, orderId }) => {
                 <Tabs value={tabValue} onChange={handleTabChange} aria-label="configuration tabs">
                   <Tab label="Modules" id="config-tab-0" />
                   <Tab label="Custom Materials" id="config-tab-1" />
+                  <Tab label="3D Visualizer" id="config-tab-2" />
                 </Tabs>
               </Box>
               
@@ -834,6 +963,194 @@ const POSConfigDialog = ({ open, onClose, orderId }) => {
                   </Grid>
                 </Grid>
               </TabPanel>
+              
+              {/* 3D Visualizer Tab */}
+              <TabPanel value={tabValue} index={2}>
+                <Grid container spacing={3}>
+                  <Grid item xs={12} md={8}>
+                    <Paper 
+                      variant="outlined" 
+                      sx={{ 
+                        p: 2, 
+                        height: 500, 
+                        display: 'flex', 
+                        flexDirection: 'column',
+                        position: 'relative'
+                      }}
+                    >
+                      <Typography variant="h6" gutterBottom>
+                        3D Module Visualization
+                      </Typography>
+                      
+                      <Box sx={{ flex: 1, borderRadius: 1, position: 'relative', height: 430 }}>
+                        <ModuleViewer3D 
+                          modules={posModules}
+                          environment={environment}
+                          lighting={lighting}
+                          onSceneReady={handleSceneReady}
+                        />
+                      </Box>
+                    </Paper>
+                  </Grid>
+                  
+                  <Grid item xs={12} md={4}>
+                    <Paper variant="outlined" sx={{ p: 2 }}>
+                      <Typography variant="h6" gutterBottom>
+                        Export Options
+                      </Typography>
+                      
+                      <FormControl fullWidth margin="normal">
+                        <InputLabel id="export-format-label">Export Format</InputLabel>
+                        <Select
+                          labelId="export-format-label"
+                          id="export-format"
+                          value={exportFormat}
+                          onChange={handleExportFormatChange}
+                          label="Export Format"
+                          disabled={posModules.length === 0}
+                        >
+                          <MenuItem value="stl">STL (.stl)</MenuItem>
+                          <MenuItem value="json">Three.js JSON (.json)</MenuItem>
+                          <MenuItem value="obj">Wavefront (.obj)</MenuItem>
+                          <MenuItem value="skp">SketchUp (.skp)</MenuItem>
+                        </Select>
+                      </FormControl>
+                      
+                      <TextField
+                        fullWidth
+                        margin="normal"
+                        id="export-scale"
+                        name="export-scale"
+                        label="Scale"
+                        type="number"
+                        value={exportScale}
+                        onChange={handleExportScaleChange}
+                        helperText="Scale factor for export (1 = actual size)"
+                        disabled={posModules.length === 0}
+                        InputProps={{ inputProps: { min: 0.1, max: 10, step: 0.1 } }}
+                      />
+                      
+                      <FormControl fullWidth margin="normal">
+                        <InputLabel id="texture-quality-label">Texture Quality</InputLabel>
+                        <Select
+                          labelId="texture-quality-label"
+                          id="texture-quality"
+                          value={textureQuality}
+                          onChange={handleTextureQualityChange}
+                          label="Texture Quality"
+                          disabled={posModules.length === 0}
+                        >
+                          <MenuItem value="low">Low</MenuItem>
+                          <MenuItem value="medium">Medium</MenuItem>
+                          <MenuItem value="high">High</MenuItem>
+                        </Select>
+                      </FormControl>
+                      
+                      <FormControl fullWidth margin="normal" component="fieldset">
+                        <Typography variant="subtitle2" gutterBottom>
+                          Include in Export:
+                        </Typography>
+                        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1, mt: 1 }}>
+                          <Box>
+                            <Typography variant="body2" component="label" htmlFor="include-materials">
+                              Materials
+                            </Typography>
+                            <Switch 
+                              id="include-materials" 
+                              checked={includeMaterials}
+                              onChange={handleIncludeMaterialsChange}
+                              disabled={posModules.length === 0} 
+                            />
+                          </Box>
+                          <Box>
+                            <Typography variant="body2" component="label" htmlFor="include-textures">
+                              Textures
+                            </Typography>
+                            <Switch 
+                              id="include-textures" 
+                              checked={includeTextures}
+                              onChange={handleIncludeTexturesChange}
+                              disabled={posModules.length === 0} 
+                            />
+                          </Box>
+                        </Box>
+                      </FormControl>
+                      
+                      <Box sx={{ mt: 3, display: 'flex', flexDirection: 'column', gap: 1 }}>
+                        <Button
+                          fullWidth
+                          variant="contained"
+                          color="primary"
+                          startIcon={<DownloadIcon />}
+                          onClick={handleExport3DModel}
+                          disabled={posModules.length === 0 || !modelExporter}
+                        >
+                          Export 3D Model
+                        </Button>
+                        
+                        <Button
+                          fullWidth
+                          variant="outlined"
+                          color="secondary"
+                          startIcon={<PhotoIcon />}
+                          onClick={handleCaptureScreenshot}
+                          disabled={posModules.length === 0 || !modelExporter}
+                        >
+                          Capture Screenshot
+                        </Button>
+                      </Box>
+                    </Paper>
+                    
+                    <Paper variant="outlined" sx={{ p: 2, mt: 2 }}>
+                      <Typography variant="h6" gutterBottom>
+                        Visualization Settings
+                      </Typography>
+                      
+                      <Typography variant="body2" gutterBottom>
+                        Environment:
+                      </Typography>
+                      <Box sx={{ display: 'flex', gap: 1, mb: 2 }}>
+                        <Chip 
+                          label="Indoor" 
+                          color={environment === 'indoor' ? 'primary' : 'default'}
+                          variant={environment === 'indoor' ? 'filled' : 'outlined'}
+                          onClick={() => handleEnvironmentChange('indoor')}
+                          clickable 
+                          disabled={posModules.length === 0}
+                        />
+                        <Chip 
+                          label="Outdoor" 
+                          color={environment === 'outdoor' ? 'primary' : 'default'}
+                          variant={environment === 'outdoor' ? 'filled' : 'outlined'}
+                          onClick={() => handleEnvironmentChange('outdoor')}
+                          clickable 
+                          disabled={posModules.length === 0}
+                        />
+                        <Chip 
+                          label="Studio" 
+                          color={environment === 'studio' ? 'primary' : 'default'}
+                          variant={environment === 'studio' ? 'filled' : 'outlined'}
+                          onClick={() => handleEnvironmentChange('studio')}
+                          clickable 
+                          disabled={posModules.length === 0}
+                        />
+                      </Box>
+                      
+                      <Typography variant="body2" gutterBottom>
+                        Lighting:
+                      </Typography>
+                      <Slider
+                        value={lighting}
+                        onChange={handleLightingChange}
+                        min={0}
+                        max={100}
+                        valueLabelDisplay="auto"
+                        disabled={posModules.length === 0}
+                      />
+                    </Paper>
+                  </Grid>
+                </Grid>
+              </TabPanel>
             </Box>
           </>
         )}
@@ -842,6 +1159,15 @@ const POSConfigDialog = ({ open, onClose, orderId }) => {
       <DialogActions>
         <Button onClick={onClose}>Close</Button>
       </DialogActions>
+      
+      {/* Notifiche per operazioni di export */}
+      <Snackbar
+        open={notification.open}
+        autoHideDuration={6000}
+        onClose={handleCloseNotification}
+        message={notification.message}
+        anchorOrigin={{ vertical: 'bottom', horizontal: 'right' }}
+      />
     </Dialog>
   );
 };

@@ -33,7 +33,6 @@ import {
 } from '@mui/material';
 import {
   Close as CloseIcon,
-  Add as AddIcon,
   Search as SearchIcon,
   FilterList as FilterListIcon,
   MoreVert as MoreVertIcon,
@@ -213,32 +212,21 @@ const PickListPanel = () => {
 
   return (
     <>
-      <Box sx={{ display: 'flex', mb: 2, justifyContent: 'space-between', alignItems: 'center' }}>
-        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-          <TextField
-            placeholder="Search pick lists..."
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-            size="small"
-            InputProps={{
-              startAdornment: (
-                <InputAdornment position="start">
-                  <SearchIcon />
-                </InputAdornment>
-              ),
-            }}
-            sx={{ width: 300 }}
-          />
-        </Box>
-        
-        <Button
-          variant="contained"
-          startIcon={<AddIcon />}
-          color="primary"
-          onClick={() => {/* Navigate to Orders tab to create a new pick list */}}
-        >
-          Create New Pick List
-        </Button>
+      <Box sx={{ display: 'flex', mb: 2, justifyContent: 'flex-start', alignItems: 'center' }}>
+        <TextField
+          placeholder="Search pick lists..."
+          value={searchTerm}
+          onChange={(e) => setSearchTerm(e.target.value)}
+          size="small"
+          InputProps={{
+            startAdornment: (
+              <InputAdornment position="start">
+                <SearchIcon />
+              </InputAdornment>
+            ),
+          }}
+          sx={{ width: 300 }}
+        />
       </Box>
       
       <Box sx={{ height: 'calc(100% - 48px)', overflow: 'auto' }}>
@@ -339,7 +327,7 @@ const PickListPanel = () => {
                       Print
                     </Button>
                     
-                    {pickList.status === 'draft' && (
+                    {pickList.status === 'draft' && selectedPickListId !== pickList.id && (
                       <Button 
                         size="small" 
                         color="success"
@@ -373,7 +361,7 @@ const PickListPanel = () => {
             <Typography variant="body2" color="text.secondary" align="center">
               {searchTerm 
                 ? 'No pick lists match your search. Try different keywords.'
-                : 'Start by creating a new pick list from the POS Orders tab.'}
+                : 'No pick lists found.'}
             </Typography>
             
             {searchTerm && (
@@ -446,7 +434,7 @@ const PickListPanel = () => {
             <Typography variant="h6">
               Pick List Details
             </Typography>
-            <IconButton edge="end" color="inherit" onClick={() => setDetailsDialogOpen(false)}>
+            <IconButton edge="end" color="inherit" onClick={() => setDetailsDialogOpen(false)} aria-label="close">
               <CloseIcon />
             </IconButton>
           </Box>

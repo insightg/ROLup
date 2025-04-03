@@ -14,6 +14,7 @@ import {
   saveModule,
   deleteModule,
   getModuleMaterials,
+  getModuleComponents,
   saveModuleMaterial,
   deleteModuleMaterial
 } from '../api/pickApi';
@@ -60,6 +61,7 @@ export const usePickStore = create((set, get) => ({
   
   // Configuration States
   moduleMaterials: [], // Materials for a specific module
+  moduleComponents: {}, // Components for modules, indexed by module_id
   
   // Getters
   getSelectedOrders: () => get().selectedOrders,
@@ -67,6 +69,7 @@ export const usePickStore = create((set, get) => ({
   getMaterialById: (id) => get().materials.find(material => material.id === id),
   getSupplierById: (id) => get().suppliers.find(supplier => supplier.id === id),
   getOrderById: (id) => get().posOrders.find(order => order.id === id),
+  getModuleComponents: (moduleId) => get().moduleComponents[moduleId] || [],
   
   // Actions
   setModules: (modules) => set({ modules }),
@@ -76,6 +79,12 @@ export const usePickStore = create((set, get) => ({
   setPickLists: (pickLists) => set({ pickLists }),
   setSelectedOrders: (selectedOrders) => set({ selectedOrders }),
   setModuleMaterials: (moduleMaterials) => set({ moduleMaterials }),
+  setModuleComponents: (moduleId, components) => set(state => ({ 
+    moduleComponents: { 
+      ...state.moduleComponents, 
+      [moduleId]: components 
+    } 
+  })),
   toggleOrderSelection: (orderId) => {
     const currentSelected = get().selectedOrders;
     const isSelected = currentSelected.includes(orderId);
@@ -292,6 +301,39 @@ export const usePickStore = create((set, get) => ({
       }
     } catch (error) {
       console.error('Error loading module materials:', error);
+      set({ error: 'Error in communication with server' });
+      return { success: false, error: error.message };
+    } finally {
+      set({ isLoading: false });
+      apiCallTracker.endCall(callId);
+    }
+  },
+  
+  // Load components for a specific module
+  loadModuleComponents: async (moduleId) => {
+    const callId = `loadModuleComponents-${moduleId}`;
+    
+    if (apiCallTracker.isCallActive(callId)) {
+      console.log("Module components load already in progress, skipping duplicate call");
+      return { success: false, error: 'Operation already in progress' };
+    }
+    
+    try {
+      console.log(`Loading components for module ID ${moduleId}...`);
+      apiCallTracker.startCall(callId);
+      set({ isLoading: true, error: null });
+      
+      const response = await getModuleComponents(moduleId);
+      
+      if (response.success) {
+        get().setModuleComponents(moduleId, response.data);
+        return response;
+      } else {
+        set({ error: response.error || 'Error loading module components' });
+        return response;
+      }
+    } catch (error) {
+      console.error('Error loading module components:', error);
       set({ error: 'Error in communication with server' });
       return { success: false, error: error.message };
     } finally {
